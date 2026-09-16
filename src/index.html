@@ -7,10 +7,14 @@
 <link rel="stylesheet" href="assets/page.css">
 </head>
 <body>
-<main>
-  <h1>ATGC booking</h1>
-</main>
+<header class="bar">
+  <span class="brand">ATGC booking</span>
+  <span id="who" class="who"></span>
+</header>
+<main id="app" aria-live="polite"></main>
+<div id="busy" class="busy" hidden><span class="dot"></span><span id="busy-text"></span></div>
 <script src="config.js"></script>
 <script src="assets/seal.js"></script>
+<script src="assets/app.js"></script>
 </body>
 </html>
