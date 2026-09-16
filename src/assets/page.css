@@ -1,0 +1,25 @@
+:root {
+  --ink: #1d2733;
+  --muted: #5b6875;
+  --line: #d9dee4;
+  --ground: #f6f7f9;
+  --accent: #0b5cad;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding-inline: 16px;
+  background: var(--ground);
+  color: var(--ink);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+}
+
+main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding-block: 32px;
+}
+
+h1 { font-size: 22px; font-weight: 600; margin: 0 0 24px; }

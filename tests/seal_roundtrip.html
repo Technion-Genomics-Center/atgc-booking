@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>seal round trip</title>
+<!--
+  Proves src/assets/seal.js here and booking/seal.py on the server agree, both directions (docs/21 §4).
+  Driven from outside: a script seals to a Python key here, Python opens it, and
+  Python's reply is opened here. The page itself does nothing on load.
+-->
+<script src="../src/assets/seal.js"></script>
+<p>seal.js loaded: <span id="ok">no</span></p>
+<script>document.getElementById("ok").textContent = typeof Seal === "object" ? "yes" : "no";</script>
