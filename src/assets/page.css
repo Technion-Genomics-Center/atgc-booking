@@ -11,6 +11,8 @@
 }
 
 * { box-sizing: border-box; }
+/* Anything hidden stays hidden, whatever display its own rule gives it. */
+[hidden] { display: none !important; }
 
 body {
   margin: 0;

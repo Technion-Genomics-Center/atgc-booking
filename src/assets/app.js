@@ -727,7 +727,7 @@
 
   function renderProfile(message) {
     const p = (state.me && state.me.person) || {};
-    const name = el("input", { required: true, value: p.name || "", autocomplete: "name" });
+    const name = el("input", { required: true, value: p.name || "", autocomplete: "name", placeholder: "Full name, in English" });
     const lab = el("input", { value: p.phone_lab || "", autocomplete: "tel" });
     const mobile = el("input", { value: p.phone_personal || "", autocomplete: "tel" });
     show(el("form", {
@@ -753,10 +753,21 @@
     const f = {
       name: el("input", { required: true }),
       pi_name: el("input", { required: true, placeholder: "Surname Name" }),
-      faculty: el("input", {}),
-      institute: el("input", {}),
+      institute_kind: el("select", {}, el("option", { value: "technion" }, "Technion"),
+        el("option", { value: "other" }, "Another institute")),
+      faculty: el("select", { required: true }, el("option", { value: "" }, ""),
+        ((state.me && state.me.faculties) || []).map(x => el("option", { value: x }, x))),
+      institute: el("input", { placeholder: "Institute or company" }),
       budget: el("input", { required: true }),
     };
+    // Technion groups have a faculty; other institutes only a name.
+    const facultyLabel = el("label", {}, "Faculty", f.faculty);
+    const instituteLabel = el("label", { hidden: true }, "Institute", f.institute);
+    f.institute_kind.addEventListener("change", () => {
+      const technion = f.institute_kind.value === "technion";
+      facultyLabel.hidden = !technion; f.faculty.required = technion;
+      instituteLabel.hidden = technion; f.institute.required = !technion;
+    });
     const noBudget = el("input", { type: "checkbox" });
     noBudget.addEventListener("change", () => {
       f.budget.required = !noBudget.checked; f.budget.disabled = noBudget.checked;
@@ -774,7 +785,7 @@
       },
     }, el("h2", {}, "Open a group"),
       el("label", {}, "Group", f.name), el("label", {}, "PI", f.pi_name),
-      el("label", {}, "Faculty", f.faculty), el("label", {}, "Institute", f.institute),
+      el("label", {}, "Institute", f.institute_kind), facultyLabel, instituteLabel,
       el("label", {}, "Technion budget", f.budget),
       el("label", { class: "tick" }, noBudget, "No Technion budget — billed by quote at the end of each month"),
       el("div", { class: "row" }, el("button", { class: "primary", type: "submit" }, "Open"),
