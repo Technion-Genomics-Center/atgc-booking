@@ -363,7 +363,7 @@
   // The order table follows Bookitlab's request-lines table, column for column
   // with Service added because one order mixes services.
   const LINE_HEADS = ["ID", "Status", "Service", "Template source", "Template name", "Template label",
-    "Size", "Conc ng/ul", "Primer source", "Primer name", "Primer label"];
+    "Size", "Conc ng/ul", "Primer source", "Primer name", "Primer label", "Comment"];
 
   function dateOf(stamp) {
     const d = (stamp || "").slice(0, 10).split("-");
@@ -403,7 +403,8 @@
             el("td", {}, l.template.source), el("td", {}, l.template.name || ""), el("td", {}, l.template.label || ""),
             el("td", {}, l.template.size == null ? "" : String(l.template.size)),
             el("td", {}, l.template.concentration == null ? "" : String(l.template.concentration)),
-            el("td", {}, l.primer.source), el("td", {}, l.primer.name || ""), el("td", {}, l.primer.label || "")))))),
+            el("td", {}, l.primer.source), el("td", {}, l.primer.name || ""), el("td", {}, l.primer.label || ""),
+            el("td", { class: "comment" }, l.remarks || "")))))),
         order.remarks ? el("p", { class: "muted small" }, order.remarks) : null));
     }
     return box;
@@ -605,10 +606,16 @@
             el("td", {}, l.template.size == null ? "" : String(l.template.size)),
             el("td", {}, l.template.concentration == null ? "" : String(l.template.concentration)),
             el("td", {}, l.primer.source), el("td", {}, l.primer.name || ""), el("td", {}, l.primer.label || ""),
-            el("td", {}, open && l.status !== "Done"
-              ? el("button", { class: "link", onclick: () => act("staff_line", { line_id: l.line_id, skip: l.status !== "Skip" }) },
-                l.status === "Skip" ? "Unskip" : "Skip")
-              : "")))))),
+            el("td", { class: "comment" }, l.remarks || "", l.repeats ? el("span", { class: "status started" }, " repeat " + l.repeats) : null),
+            el("td", {}, el("div", { class: "row nowrap" },
+              (l.status === "In Work" || l.status === "Done") && order.status !== "cancelled"
+                ? el("button", {
+                  class: "link", onclick: () => { if (confirm("Run line " + l.line_id + " again?")) act("staff_line", { line_id: l.line_id, repeat: true }); },
+                }, "Repeat") : null,
+              open && l.status !== "Done"
+                ? el("button", { class: "link", onclick: () => act("staff_line", { line_id: l.line_id, skip: l.status !== "Skip" }) },
+                  l.status === "Skip" ? "Unskip" : "Skip")
+                : null))))))),
         order.remarks ? el("p", { class: "muted small" }, order.remarks) : null));
   }
 
@@ -750,10 +757,15 @@
       institute: el("input", {}),
       budget: el("input", { required: true }),
     };
+    const noBudget = el("input", { type: "checkbox" });
+    noBudget.addEventListener("change", () => {
+      f.budget.required = !noBudget.checked; f.budget.disabled = noBudget.checked;
+    });
     show(el("form", {
       class: "card stack", onsubmit: async e => {
         e.preventDefault();
         const args = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v.value]));
+        args.no_technion_budget = noBudget.checked;
         const reply = await call("open_group", args, "");
         if (!reply) return;
         if (!reply.ok) return renderOpenGroup(reply.error);
@@ -763,7 +775,8 @@
     }, el("h2", {}, "Open a group"),
       el("label", {}, "Group", f.name), el("label", {}, "PI", f.pi_name),
       el("label", {}, "Faculty", f.faculty), el("label", {}, "Institute", f.institute),
-      el("label", {}, "Budget", f.budget),
+      el("label", {}, "Technion budget", f.budget),
+      el("label", { class: "tick" }, noBudget, "No Technion budget — billed by quote at the end of each month"),
       el("div", { class: "row" }, el("button", { class: "primary", type: "submit" }, "Open"),
         el("button", { type: "button", class: "link", onclick: () => renderHome() }, "Back")),
       message ? errorLine(message) : null));
@@ -823,9 +836,13 @@
     const groups = state.me.groups.filter(g => g.status === "approved" && isOpen(g));
     const group = el("select", { required: true }, groups.map(g =>
       el("option", { value: g.group_id, selected: from && from.group_id === g.group_id }, g.name)));
-    const budget = el("select", { required: true });
+    const budget = el("select", {});
     const fillBudgets = () => {
       const g = groups.find(x => x.group_id === group.value) || groups[0];
+      if (g && g.no_technion_budget && !g.budgets.length) {
+        budget.replaceChildren(el("option", { value: "" }, "Quote at month end"));
+        return;
+      }
       budget.replaceChildren(...(g ? g.budgets : []).map(b =>
         el("option", { value: b.code, selected: from ? from.budget === b.code : b.default }, b.code)));
     };
@@ -983,11 +1000,13 @@
     }
     setSource();
 
+    const comment = el("input", { maxlength: "200", value: (from && from.remarks) || "" });
     const tr = el("tr", {},
       el("td", { class: "muted" }, "—"), el("td", { class: "muted" }, "New"), el("td", {}, service),
       el("td", { class: "muted" }, "User"), el("td", {}, template.node), templateLabel,
       el("td", { class: "narrow" }, size), el("td", { class: "narrow" }, conc),
       el("td", {}, primerSource), primerCell, primerLabel,
+      el("td", { class: "comment" }, comment),
       el("td", {}, el("div", { class: "row nowrap" },
         el("button", {
           type: "button", class: "danger", title: "Remove line",
@@ -1000,6 +1019,7 @@
       service: service.value,
       template: template.read({ insert_length: size.value, concentration: conc.value }),
       primer: primerSource.value === "Core" ? { core: coreName.value } : primer.read({}),
+      remarks: comment.value,
     });
     // The same shape as a line of a placed order, so "+" copies this line.
     tr.readView = () => {
@@ -1010,6 +1030,7 @@
           size: size.value || null, concentration: conc.value || null },
         primer: primerSource.value === "Core" ? { source: "Core", name: coreName.value }
           : { tube_id: l.primer.tube_id, name: primer.input.value },
+        remarks: comment.value,
       };
     };
     return tr;
