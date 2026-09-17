@@ -116,18 +116,21 @@
     const accepted = await put.json();
     if (!accepted.ok) throw new Error("The message was not accepted.");
 
+    // The letterbox holds this call open until the answer is there (letterbox
+    // v2), so the page asks again only when a wait runs out.
     const sep = C.letterboxUrl.includes("?") ? "&" : "?";
     const deadline = Date.now() + 120000;
-    await sleep(2500);
     while (Date.now() < deadline) {
-      const res = await fetch(C.letterboxUrl + sep + "op=get_out&id=" + rid);
+      const asked = Date.now();
+      const res = await fetch(C.letterboxUrl + sep + "op=get_out&wait=20000&id=" + rid);
       const got = await res.json();
       if (got.ok && got.found) {
         const reply = await Seal.open(state.keyPair.privateKey, JSON.parse(got.blob));
         if (reply.rid !== rid) throw new Error("An answer to another request arrived.");
         return reply;
       }
-      await sleep(2500);
+      // An older letterbox answers at once; do not hammer it.
+      if (Date.now() - asked < 1500) await sleep(1500);
     }
     throw new Error("No answer yet. Please try again in a minute.");
   }
@@ -183,13 +186,13 @@
 
     state.me = cache.get("me");
     state.orders = cache.get("orders");
+    state.tubes = state.orders && state.orders.tubes;
     showWho();
     if (state.me) renderHome();
-    const reply = await call("me");
+    const reply = await call("home");
     if (reply && reply.ok) {
       setMe(reply.data);
       renderHome();
-      refreshOrders();
     } else if (reply && !state.me) {
       renderSignIn(reply.error);
     }
@@ -202,9 +205,12 @@
       el("button", { class: "link", onclick: () => signOut() }, "Sign out"));
   }
 
-  function setMe(me) {
+  // A "home" reply carries the orders too; they are kept apart from the rest.
+  function setMe(data) {
+    const { orders, ...me } = data;
     state.me = me;
     cache.set("me", me);
+    if (orders) setOrders(orders);
   }
 
   async function signOutLocally() {
@@ -263,7 +269,6 @@
         setMe(reply.data);
         showWho();
         renderHome();
-        refreshOrders();
       },
     }, el("h2", {}, "Code"), el("p", { class: "muted small" }, state.email),
       el("label", {}, "6 digits", code),
@@ -417,28 +422,42 @@
   // lab's own stickers: the date up the left edge, then the label in bold, the
   // tube's name and the PI. Printing starts the order.
 
+  // One row per line, as the order shows it: each line has a template label and
+  // a primer label, and either may already be on its tube from an earlier order.
+  // A tube used on several lines is one sticker; its boxes move together.
   function renderLabels(order, message) {
-    const seen = new Set();
-    const tubes = [];
+    const tubes = new Map();                 // tube_id -> { tube, wanted, boxes }
     for (const l of order.lines) {
       for (const t of [l.template, l.primer]) {
-        if (!t.tube_id || seen.has(t.tube_id)) continue;
-        seen.add(t.tube_id);
-        tubes.push(t);
+        if (t.tube_id && !tubes.has(t.tube_id)) tubes.set(t.tube_id, { tube: t, wanted: !t.printed, boxes: [] });
       }
     }
-    const boxes = tubes.map(t => el("input", { type: "checkbox", checked: !t.printed }));
     const go = el("button", { class: "primary" });
     const setGo = () => {
-      const n = boxes.filter(b => b.checked).length;
+      const n = [...tubes.values()].filter(x => x.wanted).length;
       go.textContent = n ? "Print " + n : "No labels needed";
       go.disabled = !n && order.status !== "new";
     };
-    boxes.forEach(b => b.addEventListener("change", setGo));
+    const cell = t => {
+      if (!t.tube_id) return el("td", { class: "muted" }, t.source === "Core" ? "Core · " + (t.name || "") : "");
+      const entry = tubes.get(t.tube_id);
+      const box = el("input", { type: "checkbox", checked: entry.wanted });
+      entry.boxes.push(box);
+      box.addEventListener("change", () => {
+        entry.wanted = box.checked;
+        entry.boxes.forEach(b => { b.checked = entry.wanted; });
+        setGo();
+      });
+      return el("td", {}, el("label", { class: "tick" }, box,
+        el("strong", {}, t.label || ""), " ", t.name || "",
+        t.printed ? el("span", { class: "muted small" }, " · printed") : null));
+    };
+    const rows = order.lines.map(l => el("tr", {},
+      el("td", {}, l.line_id), el("td", {}, l.service_name), cell(l.template), cell(l.primer)));
     setGo();
 
     go.addEventListener("click", async () => {
-      const chosen = tubes.filter((t, i) => boxes[i].checked);
+      const chosen = [...tubes.values()].filter(x => x.wanted).map(x => x.tube);
       if (chosen.length) printStickers(order, chosen);
       const reply = await call("labels_printed", { order_id: order.order_id, tube_ids: chosen.map(t => t.tube_id) }, "");
       if (!reply) return;
@@ -450,9 +469,9 @@
     show(el("h2", {}, "Labels · #" + order.order_id),
       message ? errorLine(message) : null,
       el("div", { class: "card" },
-        tubes.length ? el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {}, tubes.map((t, i) => el("tr", {},
-          el("td", {}, boxes[i]), el("td", {}, el("strong", {}, t.label || "")), el("td", {}, t.name || ""),
-          el("td", { class: "muted small" }, t.printed ? "printed" : "")))))) : null,
+        el("div", { class: "table-wrap" }, el("table", {},
+          el("thead", {}, el("tr", {}, ["ID", "Service", "Template label", "Primer label"].map(h => el("th", {}, h)))),
+          el("tbody", {}, rows))),
         el("div", { class: "row", style: "margin-top:10px" }, go,
           el("button", { class: "link", onclick: () => renderHome() }, "Back"))));
   }
@@ -603,7 +622,11 @@
         renderHome();
       },
     }, el("h2", {}, "New Sanger order"),
-      el("div", { class: "row" }, el("label", {}, "Group", group), el("label", {}, "Budget", budget)),
+      el("div", { class: "row" }, el("label", {}, "Group", group), el("label", {}, "Budget", budget),
+        el("span", { class: "grow" }),
+        state.me.core_primers_url
+          ? el("a", { class: "button", href: state.me.core_primers_url, target: "_blank", rel: "noopener" }, "Core primers")
+          : null),
       el("div", { class: "table-wrap", style: "margin-top:12px" }, el("table", { class: "lines form" },
         el("thead", {}, el("tr", {}, LINE_HEADS.map(h => el("th", {}, h)), el("th", {}, ""))),
         body)),
@@ -700,7 +723,9 @@
     const primerLabel = el("td", { class: "muted" });
     const primerSource = el("select", {}, el("option", { value: "User" }, "User"), el("option", { value: "Core" }, "Core"));
     const primer = tubePicker("primer", primerLabel, () => {});
-    const coreName = el("input", { required: true, hidden: true });
+    const coreName = el("select", { required: true, hidden: true },
+      el("option", { value: "" }, ""),
+      (state.me.core_primers || []).map(name => el("option", { value: name }, name)));
     const primerCell = el("td", {}, primer.node, coreName);
     const setSource = () => {
       const core = primerSource.value === "Core";

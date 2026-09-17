@@ -57,6 +57,10 @@ button.link { border: 0; background: none; color: var(--accent); padding: 0; }
 button:disabled { opacity: .5; cursor: default; }
 
 a { color: var(--accent); }
+a.button {
+  font-size: 14px; border-radius: 6px; padding: 7px 14px; text-decoration: none;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink);
+}
 
 .error { color: var(--bad); margin: 8px 0 0; }
 
@@ -84,6 +88,8 @@ table.form td:nth-child(9) { min-width: 90px; }
 textarea { width: 100%; resize: vertical; }
 button.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
 .invite { border-color: var(--accent); }
+label.tick { display: flex; flex-direction: row; align-items: center; gap: 6px; font-size: 14px; color: var(--ink); white-space: nowrap; }
+label.tick input { width: auto; flex: none; }
 
 /* The tube picker: one box, a short list of your own tubes under it. */
 .picker { position: relative; }
