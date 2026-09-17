@@ -322,7 +322,8 @@
       el("div", { class: "card" },
         el("div", { class: "row" },
           approved.length ? el("button", { class: "primary", onclick: () => renderOrderForm() }, "New Sanger order") : null,
-          me.folder ? el("a", { href: me.folder, target: "_blank", rel: "noopener" }, "Results folder") : null)),
+          me.folder ? el("a", { href: me.folder, target: "_blank", rel: "noopener" }, "Results folder") : null,
+          me.staff ? el("button", { onclick: () => renderBench() }, "Bench labels") : null)),
       el("h2", {}, "Groups"),
       el("div", { class: "card" },
         me.groups.length
@@ -426,13 +427,7 @@
   // A template or primer from an earlier order is already at the centre, like
   // a core primer, so it gets none (Nitsan, 2026-09-17). Nothing to tick.
   function renderLabels(order, message) {
-    const labels = new Map();
-    for (const l of order.lines) {
-      for (const t of [l.template, l.primer]) {
-        if (t.new && t.tube_id && !labels.has(t.tube_id)) labels.set(t.tube_id, t);
-      }
-    }
-    const tubes = [...labels.values()];
+    const tubes = labelsOf(order);
     const go = el("button", { class: "primary" }, tubes.length ? "Print " + tubes.length : "No labels needed");
     if (!tubes.length && order.status !== "new") go.disabled = true;
     go.addEventListener("click", async () => {
@@ -454,18 +449,109 @@
           el("button", { class: "link", onclick: () => renderHome() }, "Back"))));
   }
 
+  // An order's own new tubes, each once - what its labels are.
+  function labelsOf(order) {
+    const seen = new Map();
+    for (const l of order.lines) {
+      for (const t of [l.template, l.primer]) {
+        if (t.new && t.tube_id && !seen.has(t.tube_id)) seen.set(t.tube_id, t);
+      }
+    }
+    return [...seen.values()];
+  }
+
   function printStickers(order, tubes) {
+    printSheet(tubes.map(t => [order, t]));
+  }
+
+  // One sticker per page, for any mix of orders: [[order, tube], ...].
+  function printSheet(pairs) {
     let sheet = document.getElementById("print-sheet");
     if (!sheet) {
       sheet = el("div", { id: "print-sheet" });
       document.body.append(sheet);
     }
-    const date = dateOf(order.created_at);
-    sheet.replaceChildren(...tubes.map(t => el("div", { class: "sticker" },
-      el("div", { class: "sticker-date" }, date),
+    sheet.replaceChildren(...pairs.map(([order, t]) => el("div", { class: "sticker" },
+      el("div", { class: "sticker-date" }, dateOf(order.created_at)),
       el("div", { class: "sticker-text" },
         el("b", {}, t.label || ""), el("span", {}, t.name || ""), el("span", {}, order.pi_name || "")))));
     window.print();
+  }
+
+  // ----------------------------------------------------------------- bench
+  //
+  // At the printer, for ATGC staff: every order whose labels are not printed.
+  // Not everything placed is brought in on the day, so the bench ticks the
+  // orders that arrived and prints theirs (Nitsan, 2026-09-17).
+
+  async function renderBench(message, data) {
+    let orders = data;
+    if (!orders) {
+      const reply = await call("bench_orders", {}, "");
+      if (!reply) return;
+      if (!reply.ok) return renderHome(reply.error);
+      orders = reply.data.orders;
+    }
+    const picked = new Set();
+    const go = el("button", { class: "primary", disabled: true }, "Print");
+    const count = () => {
+      const labels = orders.filter(o => picked.has(o.order_id)).reduce((n, o) => n + labelsOf(o).length, 0);
+      go.textContent = picked.size ? "Print " + labels + " · " + picked.size + " order" + (picked.size > 1 ? "s" : "") : "Print";
+      go.disabled = !picked.size;
+    };
+    const all = el("input", { type: "checkbox", title: "All" });
+    const boxes = orders.map(o => {
+      const box = el("input", { type: "checkbox" });
+      box.addEventListener("change", () => {
+        if (box.checked) picked.add(o.order_id); else picked.delete(o.order_id);
+        all.checked = picked.size === orders.length;
+        count();
+      });
+      return box;
+    });
+    all.addEventListener("change", () => {
+      boxes.forEach((b, i) => { b.checked = all.checked; if (all.checked) picked.add(orders[i].order_id); });
+      if (!all.checked) picked.clear();
+      count();
+    });
+
+    go.addEventListener("click", async () => {
+      const chosen = orders.filter(o => picked.has(o.order_id));
+      const pairs = [];
+      chosen.forEach(o => labelsOf(o).forEach(t => pairs.push([o, t])));
+      if (pairs.length) printSheet(pairs);
+      const reply = await call("bench_labels_printed", { order_ids: chosen.map(o => o.order_id) }, "");
+      if (!reply) return;
+      if (!reply.ok) return renderBench(reply.error, orders);
+      renderBench(null, reply.data.orders);
+    });
+
+    const rows = [];
+    orders.forEach((o, i) => {
+      const detail = el("tr", { class: "detail", hidden: true },
+        el("td", {}), el("td", { colspan: "6" }, el("div", { class: "table-wrap" }, el("table", { class: "lines" },
+          el("tbody", {}, o.lines.map(l => el("tr", {},
+            el("td", {}, l.line_id), el("td", {}, l.service_name),
+            el("td", {}, l.template.name || ""), el("td", {}, l.template.label || ""),
+            el("td", {}, l.primer.name || ""), el("td", {}, l.primer.source === "Core" ? "Core" : (l.primer.label || "")))))))));
+      rows.push(el("tr", {},
+        el("td", {}, boxes[i]),
+        el("td", {}, el("button", { class: "link", onclick: () => { detail.hidden = !detail.hidden; } }, "#" + o.order_id)),
+        el("td", {}, (o.created_at || "").replace("T", " ").slice(0, 16)),
+        el("td", {}, o.by || ""), el("td", {}, o.group_name || ""),
+        el("td", {}, String(o.lines.length)), el("td", {}, String(labelsOf(o).length))));
+      rows.push(detail);
+    });
+
+    show(el("h2", {}, "Bench labels"),
+      message ? errorLine(message) : null,
+      el("div", { class: "card" },
+        orders.length ? el("div", { class: "table-wrap" }, el("table", {},
+          el("thead", {}, el("tr", {}, el("th", {}, all), ["Order", "Placed", "By", "Group", "Lines", "Labels"].map(h => el("th", {}, h)))),
+          el("tbody", {}, rows))) : el("p", { class: "muted" }, "—"),
+        el("div", { class: "row", style: "margin-top:10px" }, go,
+          el("button", { class: "link", onclick: () => renderBench() }, "Refresh"),
+          el("button", { class: "link", onclick: () => renderHome() }, "Back"))));
   }
 
   // --------------------------------------------------------------- profile
