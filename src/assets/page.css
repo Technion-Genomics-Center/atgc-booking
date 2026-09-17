@@ -88,6 +88,9 @@ table.form td:nth-child(9) { min-width: 90px; }
 textarea { width: 100%; resize: vertical; }
 button.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
 .invite { border-color: var(--accent); }
+.tabs { margin-bottom: 14px; }
+button.tab { border-radius: 16px; }
+button.tab.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 
 /* The tube picker: one box, a short list of your own tubes under it. */
 .picker { position: relative; }
