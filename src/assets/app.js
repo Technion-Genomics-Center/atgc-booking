@@ -422,44 +422,22 @@
   // lab's own stickers: the date up the left edge, then the label in bold, the
   // tube's name and the PI. Printing starts the order.
 
-  // One row per line, as the order shows it: each line has a template label and
-  // a primer label, and either may already be on its tube from an earlier order.
-  // A tube used on several lines is one sticker; its boxes move together.
+  // The labels an order needs: its own new templates and primers, each once.
+  // A template or primer from an earlier order is already at the centre, like
+  // a core primer, so it gets none (Nitsan, 2026-09-17). Nothing to tick.
   function renderLabels(order, message) {
-    const tubes = new Map();                 // tube_id -> { tube, wanted, boxes }
+    const labels = new Map();
     for (const l of order.lines) {
       for (const t of [l.template, l.primer]) {
-        if (t.tube_id && !tubes.has(t.tube_id)) tubes.set(t.tube_id, { tube: t, wanted: !t.printed, boxes: [] });
+        if (t.new && t.tube_id && !labels.has(t.tube_id)) labels.set(t.tube_id, t);
       }
     }
-    const go = el("button", { class: "primary" });
-    const setGo = () => {
-      const n = [...tubes.values()].filter(x => x.wanted).length;
-      go.textContent = n ? "Print " + n : "No labels needed";
-      go.disabled = !n && order.status !== "new";
-    };
-    const cell = t => {
-      if (!t.tube_id) return el("td", { class: "muted" }, t.source === "Core" ? "Core · " + (t.name || "") : "");
-      const entry = tubes.get(t.tube_id);
-      const box = el("input", { type: "checkbox", checked: entry.wanted });
-      entry.boxes.push(box);
-      box.addEventListener("change", () => {
-        entry.wanted = box.checked;
-        entry.boxes.forEach(b => { b.checked = entry.wanted; });
-        setGo();
-      });
-      return el("td", {}, el("label", { class: "tick" }, box,
-        el("strong", {}, t.label || ""), " ", t.name || "",
-        t.printed ? el("span", { class: "muted small" }, " · printed") : null));
-    };
-    const rows = order.lines.map(l => el("tr", {},
-      el("td", {}, l.line_id), el("td", {}, l.service_name), cell(l.template), cell(l.primer)));
-    setGo();
-
+    const tubes = [...labels.values()];
+    const go = el("button", { class: "primary" }, tubes.length ? "Print " + tubes.length : "No labels needed");
+    if (!tubes.length && order.status !== "new") go.disabled = true;
     go.addEventListener("click", async () => {
-      const chosen = [...tubes.values()].filter(x => x.wanted).map(x => x.tube);
-      if (chosen.length) printStickers(order, chosen);
-      const reply = await call("labels_printed", { order_id: order.order_id, tube_ids: chosen.map(t => t.tube_id) }, "");
+      if (tubes.length) printStickers(order, tubes);
+      const reply = await call("labels_printed", { order_id: order.order_id, tube_ids: tubes.map(t => t.tube_id) }, "");
       if (!reply) return;
       if (!reply.ok) return renderLabels(order, reply.error);
       setOrders(reply.data);
@@ -469,9 +447,9 @@
     show(el("h2", {}, "Labels · #" + order.order_id),
       message ? errorLine(message) : null,
       el("div", { class: "card" },
-        el("div", { class: "table-wrap" }, el("table", {},
-          el("thead", {}, el("tr", {}, ["ID", "Service", "Template label", "Primer label"].map(h => el("th", {}, h)))),
-          el("tbody", {}, rows))),
+        tubes.length ? el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {}, tubes.map(t => el("tr", {},
+          el("td", {}, el("strong", {}, t.label || "")), el("td", {}, t.name || ""))))))
+          : null,
         el("div", { class: "row", style: "margin-top:10px" }, go,
           el("button", { class: "link", onclick: () => renderHome() }, "Back"))));
   }
