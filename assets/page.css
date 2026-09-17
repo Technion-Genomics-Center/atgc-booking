@@ -26,7 +26,7 @@ body {
 .brand { font-weight: 600; }
 .who { color: var(--muted); font-size: 13px; display: flex; gap: 10px; align-items: center; }
 
-main { max-width: 980px; margin: 0 auto; padding: 20px 16px 60px; }
+main { max-width: 1280px; margin: 0 auto; padding: 20px 16px 60px; }
 
 h2 { font-size: 17px; font-weight: 600; margin: 24px 0 10px; }
 h2:first-child { margin-top: 0; }
@@ -42,11 +42,11 @@ h2:first-child { margin-top: 0; }
 .small { font-size: 13px; }
 
 label { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
-input, select {
+input, select, textarea {
   font: inherit; color: var(--ink); background: var(--card);
   border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; min-width: 0;
 }
-input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 button {
   font: inherit; border-radius: 6px; padding: 7px 14px; cursor: pointer;
@@ -57,6 +57,10 @@ button.link { border: 0; background: none; color: var(--accent); padding: 0; }
 button:disabled { opacity: .5; cursor: default; }
 
 a { color: var(--accent); }
+a.button {
+  font-size: 14px; border-radius: 6px; padding: 7px 14px; text-decoration: none;
+  border: 1px solid var(--line); background: var(--card); color: var(--ink);
+}
 
 .error { color: var(--bad); margin: 8px 0 0; }
 
@@ -71,10 +75,55 @@ a { color: var(--accent); }
 .table-wrap { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 14px; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-th { color: var(--muted); font-weight: 500; font-size: 12px; }
+th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; white-space: nowrap; }
 td input, td select { width: 100%; }
-td.narrow { width: 90px; }
+td.narrow { min-width: 80px; }
+table.lines td, table.lines th { text-align: center; }
+table.form td { vertical-align: middle; }
+table.form td:nth-child(5), table.form td:nth-child(10) { min-width: 170px; }
+table.form td:nth-child(3) { min-width: 130px; }
+table.form td:nth-child(9) { min-width: 90px; }
+.grow { flex: 1; }
+.nowrap { flex-wrap: nowrap; gap: 4px; }
+textarea { width: 100%; resize: vertical; }
+button.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+.invite { border-color: var(--accent); }
 
+/* The tube picker: one box, a short list of your own tubes under it. */
+.picker { position: relative; }
+input.linked { border-color: var(--good); }
+.suggest {
+  position: fixed; z-index: 5; min-width: 260px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.12); text-align: left; max-height: 280px; overflow-y: auto;
+}
+.suggest .option { padding: 6px 10px; cursor: pointer; white-space: nowrap; }
+.suggest .option:hover, .suggest .option.active { background: var(--ground); }
+
+/* Labels: one 38 x 12 mm CRYO-TAG per printed page (DYMO LabelWriter 450). */
+#print-sheet { display: none; }
+@media print {
+  @page { size: 38mm 12mm; margin: 0; }
+  body { background: #fff; }
+  body > *:not(#print-sheet) { display: none !important; }
+  #print-sheet { display: block; }
+  .sticker {
+    width: 38mm; height: 12mm; display: flex; overflow: hidden; color: #000;
+    font-family: Arial, Helvetica, sans-serif; break-after: page; page-break-after: always;
+  }
+  .sticker-date {
+    writing-mode: vertical-rl; transform: rotate(180deg); font-size: 4.6pt;
+    width: 2.4mm; text-align: center; white-space: nowrap; overflow: hidden;
+  }
+  .sticker-text {
+    display: flex; flex-direction: column; justify-content: center; min-width: 0;
+    padding: 0 1mm 0 .8mm; line-height: 1.05;
+  }
+  .sticker-text b { font-size: 7.5pt; }
+  .sticker-text span { font-size: 6.5pt; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+}
+
+.busy[hidden] { display: none; }
 .busy {
   position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
   background: var(--ink); color: #fff; border-radius: 20px; padding: 8px 16px;
