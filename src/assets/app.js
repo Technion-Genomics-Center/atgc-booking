@@ -281,13 +281,13 @@
   function groupLabel(g) {
     if (g.group_status === "pending") return "waiting";
     if (g.group_status === "refused") return "refused";
-    return g.manager ? "manager" : g.status;
+    return g.manager ? "manager" : "member";
   }
 
   function groupClass(g) {
     if (g.group_status === "pending") return "pending";
     if (g.group_status === "refused") return "refused";
-    return g.status;
+    return "approved";
   }
 
   function renderHome(message) {
@@ -297,27 +297,33 @@
 
     // A group opened on the page waits for ATGC staff before anything works.
     const approved = me.groups.filter(g => g.status === "approved" && isOpen(g));
-    const managing = me.groups.filter(g => g.manager && isOpen(g));
+    const invitations = me.invitations || [];
 
     const groupRows = me.groups.map(g => el("tr", {},
       el("td", {}, g.name), el("td", {}, g.pi_name),
       el("td", {}, el("span", { class: "status " + groupClass(g) }, groupLabel(g))),
+      el("td", {}, g.manager && isOpen(g) ? el("button", { class: "link", onclick: () => renderMembers(g) }, "Members") : ""),
       el("td", {}, g.folder ? el("a", { href: g.folder, target: "_blank", rel: "noopener" }, "Group folder") : "")));
 
     show(
       message ? errorLine(message) : null,
+      invitations.length ? el("div", { class: "card invite" },
+        el("h2", {}, "Invitations (" + invitations.length + ")"),
+        el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {}, invitations.map(i => el("tr", {},
+          el("td", {}, i.name), el("td", {}, i.pi_name), el("td", { class: "muted small" }, i.by || ""),
+          el("td", {}, el("div", { class: "row" },
+            el("button", { class: "primary", onclick: () => answerInvite(i, true) }, "Accept"),
+            el("button", { onclick: () => answerInvite(i, false) }, "Decline"))))))))) : null,
       el("div", { class: "card" },
         el("div", { class: "row" },
           approved.length ? el("button", { class: "primary", onclick: () => renderOrderForm() }, "New Sanger order") : null,
-          me.folder ? el("a", { href: me.folder, target: "_blank", rel: "noopener" }, "Results folder") : null,
-          managing.length ? el("button", { onclick: () => renderRequests() }, "Requests") : null)),
+          me.folder ? el("a", { href: me.folder, target: "_blank", rel: "noopener" }, "Results folder") : null)),
       el("h2", {}, "Groups"),
       el("div", { class: "card" },
         me.groups.length
           ? el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {}, groupRows)))
           : null,
         el("div", { class: "row", style: "margin-top:10px" },
-          el("button", { onclick: () => renderJoin() }, "Join a group"),
           el("button", { onclick: () => renderOpenGroup() }, "Open a group"),
           el("button", { class: "link", onclick: () => renderProfile() }, "Profile"))),
       el("h2", {}, "Orders"),
@@ -325,13 +331,37 @@
     );
   }
 
+  async function answerInvite(invitation, accept) {
+    const reply = await call("answer", { group_id: invitation.group_id, accept }, "");
+    if (!reply) return;
+    if (!reply.ok) return renderHome(reply.error);
+    setMe(reply.data);
+    renderHome();
+    if (accept) refreshOrders();
+  }
+
+  function setOrders(data) {
+    state.orders = data;
+    state.tubes = data.tubes || state.tubes;
+    cache.set("orders", data);
+  }
+
   async function refreshOrders() {
     const reply = await call("orders", {}, "");
     if (reply && reply.ok) {
-      state.orders = reply.data;
-      cache.set("orders", reply.data);
+      setOrders(reply.data);
       if (document.getElementById("orders")) renderHome();
     }
+  }
+
+  // The order table follows Bookitlab's request-lines table, column for column
+  // with Service added because one order mixes services.
+  const LINE_HEADS = ["ID", "Status", "Service", "Template source", "Template name", "Template label",
+    "Size", "Conc ng/ul", "Primer source", "Primer name", "Primer label"];
+
+  function dateOf(stamp) {
+    const d = (stamp || "").slice(0, 10).split("-");
+    return d.length === 3 ? d[2] + "/" + d[1] + "/" + d[0] : "";
   }
 
   function renderOrderList() {
@@ -347,23 +377,28 @@
       return box;
     }
     for (const [order, mine] of all) {
+      const printable = order.status === "new" || order.status === "started";
       box.append(el("div", { class: "card" },
         el("div", { class: "row" },
           el("strong", {}, "#" + order.order_id),
           el("span", { class: "status " + order.status.replace(" ", "-") }, order.status),
           el("span", { class: "muted small" }, order.group_name + (mine ? "" : " · " + order.by)),
           el("span", { class: "muted small" }, (order.created_at || "").replace("T", " ").slice(0, 16)),
+          el("span", { class: "grow" }),
+          printable ? el("button", { onclick: () => renderLabels(order) }, "Print labels") : null,
+          mine ? el("button", { class: "link", onclick: () => renderOrderForm(null, order) }, "Repeat") : null,
           mine && order.status === "new"
             ? el("button", { class: "link", onclick: () => cancelOrder(order.order_id) }, "Cancel")
             : null),
-        el("div", { class: "table-wrap" }, el("table", {},
-          el("thead", {}, el("tr", {}, el("th", {}, "Line"), el("th", {}, "Service"),
-            el("th", {}, "Template"), el("th", {}, "Primer"), el("th", {}, "Status"))),
+        el("div", { class: "table-wrap" }, el("table", { class: "lines" },
+          el("thead", {}, el("tr", {}, LINE_HEADS.map(h => el("th", {}, h)))),
           el("tbody", {}, order.lines.map(l => el("tr", {},
-            el("td", {}, l.line_id), el("td", {}, l.service_name),
-            el("td", {}, (l.template.label || "") + "  " + (l.template.name || "")),
-            el("td", {}, (l.primer.label || "") + "  " + (l.primer.name || "")),
-            el("td", {}, l.status))))))));
+            el("td", {}, l.line_id), el("td", {}, l.status), el("td", {}, l.service_name),
+            el("td", {}, l.template.source), el("td", {}, l.template.name || ""), el("td", {}, l.template.label || ""),
+            el("td", {}, l.template.size == null ? "" : String(l.template.size)),
+            el("td", {}, l.template.concentration == null ? "" : String(l.template.concentration)),
+            el("td", {}, l.primer.source), el("td", {}, l.primer.name || ""), el("td", {}, l.primer.label || "")))))),
+        order.remarks ? el("p", { class: "muted small" }, order.remarks) : null));
     }
     return box;
   }
@@ -372,9 +407,68 @@
     const reply = await call("cancel", { order_id: orderId }, "");
     if (!reply) return;
     if (!reply.ok) return renderHome(reply.error);
-    state.orders = reply.data;
-    cache.set("orders", reply.data);
+    setOrders(reply.data);
     renderHome();
+  }
+
+  // ---------------------------------------------------------------- labels
+  //
+  // Printed in the browser, one 38 x 12 mm CRYO-TAG per page, laid out like the
+  // lab's own stickers: the date up the left edge, then the label in bold, the
+  // tube's name and the PI. Printing starts the order.
+
+  function renderLabels(order, message) {
+    const seen = new Set();
+    const tubes = [];
+    for (const l of order.lines) {
+      for (const t of [l.template, l.primer]) {
+        if (!t.tube_id || seen.has(t.tube_id)) continue;
+        seen.add(t.tube_id);
+        tubes.push(t);
+      }
+    }
+    const boxes = tubes.map(t => el("input", { type: "checkbox", checked: !t.printed }));
+    const go = el("button", { class: "primary" });
+    const setGo = () => {
+      const n = boxes.filter(b => b.checked).length;
+      go.textContent = n ? "Print " + n : "No labels needed";
+      go.disabled = !n && order.status !== "new";
+    };
+    boxes.forEach(b => b.addEventListener("change", setGo));
+    setGo();
+
+    go.addEventListener("click", async () => {
+      const chosen = tubes.filter((t, i) => boxes[i].checked);
+      if (chosen.length) printStickers(order, chosen);
+      const reply = await call("labels_printed", { order_id: order.order_id, tube_ids: chosen.map(t => t.tube_id) }, "");
+      if (!reply) return;
+      if (!reply.ok) return renderLabels(order, reply.error);
+      setOrders(reply.data);
+      renderHome();
+    });
+
+    show(el("h2", {}, "Labels · #" + order.order_id),
+      message ? errorLine(message) : null,
+      el("div", { class: "card" },
+        tubes.length ? el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {}, tubes.map((t, i) => el("tr", {},
+          el("td", {}, boxes[i]), el("td", {}, el("strong", {}, t.label || "")), el("td", {}, t.name || ""),
+          el("td", { class: "muted small" }, t.printed ? "printed" : "")))))) : null,
+        el("div", { class: "row", style: "margin-top:10px" }, go,
+          el("button", { class: "link", onclick: () => renderHome() }, "Back"))));
+  }
+
+  function printStickers(order, tubes) {
+    let sheet = document.getElementById("print-sheet");
+    if (!sheet) {
+      sheet = el("div", { id: "print-sheet" });
+      document.body.append(sheet);
+    }
+    const date = dateOf(order.created_at);
+    sheet.replaceChildren(...tubes.map(t => el("div", { class: "sticker" },
+      el("div", { class: "sticker-date" }, date),
+      el("div", { class: "sticker-text" },
+        el("b", {}, t.label || ""), el("span", {}, t.name || ""), el("span", {}, order.pi_name || "")))));
+    window.print();
   }
 
   // --------------------------------------------------------------- profile
@@ -431,146 +525,238 @@
     f.name.focus();
   }
 
-  async function renderJoin(message) {
-    const reply = await call("list_groups", {}, "");
-    if (!reply) return;
-    if (!reply.ok) return renderHome(reply.error);
-    const mine = new Set(state.me.groups.map(g => g.group_id));
-    const options = reply.data.groups.filter(g => !mine.has(g.group_id));
-    const pick = el("select", { required: true },
-      el("option", { value: "" }, ""),
-      options.map(g => el("option", { value: g.group_id }, g.name + " — " + g.pi_name)));
-    show(el("form", {
-      class: "card stack", onsubmit: async e => {
-        e.preventDefault();
-        if (!pick.value) return;
-        const r = await call("join_group", { group_id: pick.value }, "");
-        if (!r) return;
-        if (!r.ok) return renderHome(r.error);
-        setMe(r.data);
-        renderHome();
-      },
-    }, el("h2", {}, "Join a group"), el("label", {}, "Group", pick),
-      el("div", { class: "row" }, el("button", { class: "primary", type: "submit" }, "Ask to join"),
-        el("button", { type: "button", class: "link", onclick: () => renderHome() }, "Back")),
-      message ? errorLine(message) : null));
-  }
-
-  async function renderRequests(message, data) {
-    let list = data;
-    if (!list) {
-      const reply = await call("requests", {}, "");
+  // Groups are never listed: a manager invites people by address.
+  async function renderMembers(group, message, data) {
+    let view = data;
+    if (!view) {
+      const reply = await call("members", { group_id: group.group_id }, "");
       if (!reply) return;
       if (!reply.ok) return renderHome(reply.error);
-      list = reply.data.requests;
+      view = reply.data;
     }
-    const decide = async (r, approve) => {
-      const reply = await call("decide", { group_id: r.group_id, user_id: r.user_id, approve }, "");
+    const again = async (op, args) => {
+      const reply = await call(op, Object.assign({ group_id: group.group_id }, args), "");
       if (!reply) return;
-      if (!reply.ok) return renderRequests(reply.error, list);
-      renderRequests(null, reply.data.requests);
+      if (!reply.ok) return renderMembers(group, reply.error, view);
+      renderMembers(group, null, reply.data);
     };
-    show(el("h2", {}, "Requests"),
+    const address = el("input", { type: "email", required: true, autocomplete: "off" });
+    show(el("h2", {}, view.name),
       message ? errorLine(message) : null,
       el("div", { class: "card" },
-        list.length ? el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {}, list.map(r => el("tr", {},
-          el("td", {}, r.name), el("td", {}, r.email), el("td", {}, r.phone_lab), el("td", {}, r.group_name),
-          el("td", {}, el("div", { class: "row" },
-            el("button", { class: "primary", onclick: () => decide(r, true) }, "Approve"),
-            el("button", { onclick: () => decide(r, false) }, "Refuse")))))))) : el("p", { class: "muted" }, "—"),
-        el("div", { class: "row", style: "margin-top:10px" },
-          el("button", { class: "link", onclick: () => { refreshMe(); } }, "Back"))));
-  }
-
-  async function refreshMe() {
-    const reply = await call("me", {}, "");
-    if (reply && reply.ok) setMe(reply.data);
-    renderHome();
+        el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {},
+          view.members.map(m => el("tr", {},
+            el("td", {}, m.name), el("td", {}, m.email), el("td", {}, m.phone_lab),
+            el("td", {}, m.manager ? el("span", { class: "status approved" }, "manager") : ""))),
+          view.invited.map(i => el("tr", {},
+            el("td", { class: "muted" }, "—"), el("td", {}, i.email), el("td", {}, ""),
+            el("td", {}, el("div", { class: "row" },
+              el("span", { class: "status pending" }, "invited"),
+              el("button", { class: "link", onclick: () => again("withdraw", { email: i.email }) }, "Withdraw")))))))),
+        el("form", {
+          class: "row", style: "margin-top:12px", onsubmit: e => {
+            e.preventDefault();
+            again("invite", { email: address.value.trim() });
+          },
+        }, address, el("button", { class: "primary", type: "submit" }, "Invite"),
+          el("button", { type: "button", class: "link", onclick: () => renderHome() }, "Back"))));
+    address.focus();
   }
 
   // ----------------------------------------------------------------- order
 
-  async function renderOrderForm(message) {
+  async function renderOrderForm(message, from) {
     if (!state.tubes) {
       const reply = await call("tubes", {}, "");
       if (!reply) return;
       state.tubes = reply.ok ? reply.data.tubes : [];
     }
     const groups = state.me.groups.filter(g => g.status === "approved" && isOpen(g));
-    const group = el("select", { required: true }, groups.map(g => el("option", { value: g.group_id }, g.name)));
+    const group = el("select", { required: true }, groups.map(g =>
+      el("option", { value: g.group_id, selected: from && from.group_id === g.group_id }, g.name)));
     const budget = el("select", { required: true });
     const fillBudgets = () => {
       const g = groups.find(x => x.group_id === group.value) || groups[0];
       budget.replaceChildren(...(g ? g.budgets : []).map(b =>
-        el("option", { value: b.code, selected: b.default }, b.code)));
+        el("option", { value: b.code, selected: from ? from.budget === b.code : b.default }, b.code)));
     };
     group.addEventListener("change", fillBudgets);
     fillBudgets();
 
     const body = el("tbody");
-    const addLine = () => body.append(lineRow());
-    addLine();
+    if (from) from.lines.forEach(l => body.append(lineRow(l)));
+    else body.append(lineRow());
+    const remarks = el("textarea", { rows: "3", maxlength: "1000" });
 
     show(el("form", {
       class: "card", onsubmit: async e => {
         e.preventDefault();
         const lines = [...body.children].map(tr => tr.readLine());
-        const reply = await call("place_order", { group_id: group.value, budget: budget.value, lines }, "");
+        const reply = await call("place_order", { group_id: group.value, budget: budget.value, lines, remarks: remarks.value }, "");
         if (!reply) return;
         if (!reply.ok) {
           const err = document.getElementById("form-error");
           err.replaceChildren(document.createTextNode(reply.error));
           return;
         }
-        state.orders = reply.data;
-        cache.set("orders", reply.data);
-        state.tubes = null;
+        setOrders(reply.data);
         renderHome();
       },
     }, el("h2", {}, "New Sanger order"),
       el("div", { class: "row" }, el("label", {}, "Group", group), el("label", {}, "Budget", budget)),
-      el("div", { class: "table-wrap", style: "margin-top:12px" }, el("table", {},
-        el("thead", {}, el("tr", {}, el("th", {}, "Service"), el("th", {}, "Template"), el("th", { class: "narrow" }, "ng/µl"),
-          el("th", {}, "Primer"), el("th", { class: "narrow" }, "µM"), el("th", {}, "Remarks"), el("th", {}, ""))),
+      el("div", { class: "table-wrap", style: "margin-top:12px" }, el("table", { class: "lines form" },
+        el("thead", {}, el("tr", {}, LINE_HEADS.map(h => el("th", {}, h)), el("th", {}, ""))),
         body)),
+      el("label", { style: "margin-top:12px" }, "Comments", remarks),
       el("div", { class: "row", style: "margin-top:10px" },
-        el("button", { type: "button", onclick: () => addLine() }, "+ Line"),
         el("button", { class: "primary", type: "submit" }, "Place order"),
         el("button", { type: "button", class: "link", onclick: () => renderHome() }, "Back")),
       el("p", { class: "error", id: "form-error", role: "alert" }, message || "")));
   }
 
-  function tubePicker(kind) {
-    const own = (state.tubes || []).filter(t => t.kind === kind);
-    const select = el("select", {},
-      el("option", { value: "" }, "New"),
-      own.map(t => el("option", { value: t.tube_id }, t.label + "  " + t.name)));
-    const name = el("input", { required: true });
-    const conc = el("input", { inputmode: "decimal" });
-    select.addEventListener("change", () => {
-      const reuse = !!select.value;
-      name.hidden = reuse; name.required = !reuse; conc.disabled = reuse;
+  // One box for a tube: type a name for a new one, or find one of yours by name
+  // or label - hundreds of them - and pick it. Typing a name or label that is
+  // exactly one of yours picks it too, which is what the server would do anyway.
+  function tubePicker(kind, labelCell, onPick) {
+    const own = () => (state.tubes || []).filter(t => t.kind === kind);
+    const input = el("input", { required: true, autocomplete: "off", spellcheck: "false" });
+    const list = el("div", { class: "suggest", hidden: true });
+    const wrap = el("div", { class: "picker" }, input, list);
+    let picked = null;
+    let active = -1;
+
+    const set = tube => {
+      picked = tube;
+      if (tube) input.value = tube.name;
+      input.classList.toggle("linked", !!tube);
+      labelCell.textContent = tube ? tube.label : (input.value.trim() ? "new" : "");
+      labelCell.classList.toggle("muted", !tube);
+      onPick(tube);
+    };
+    const matches = () => {
+      const q = input.value.trim().toLowerCase();
+      return own().filter(t => !q || t.name.toLowerCase().includes(q) || t.label.toLowerCase().includes(q)).slice(0, 8);
+    };
+    const draw = () => {
+      const found = matches();
+      active = Math.min(active, found.length - 1);
+      list.replaceChildren(...found.map((t, i) => el("div", {
+        class: "option" + (i === active ? " active" : ""),
+        onmousedown: e => { e.preventDefault(); set(t); list.hidden = true; },
+      }, el("strong", {}, t.label), " ", t.name, el("span", { class: "muted small" }, " " + dateOf(t.date)))));
+      list.hidden = !found.length || document.activeElement !== input;
+      if (!list.hidden) {
+        // Fixed, not absolute: the table scrolls sideways and would cut it off.
+        const r = input.getBoundingClientRect();
+        list.style.left = r.left + "px";
+        list.style.top = r.bottom + 2 + "px";
+      }
+    };
+    window.addEventListener("scroll", () => { list.hidden = true; }, { passive: true });
+    input.addEventListener("focus", draw);
+    input.addEventListener("blur", () => { list.hidden = true; });
+    input.addEventListener("input", () => {
+      const typed = input.value.trim();
+      set(own().find(t => t.name === typed) || own().find(t => t.label.toLowerCase() === typed.toLowerCase()) || null);
+      active = -1;
+      draw();
+    });
+    input.addEventListener("keydown", e => {
+      const found = matches();
+      if (list.hidden || !found.length) return;
+      if (e.key === "ArrowDown") { active = (active + 1) % found.length; draw(); e.preventDefault(); }
+      else if (e.key === "ArrowUp") { active = (active - 1 + found.length) % found.length; draw(); e.preventDefault(); }
+      else if (e.key === "Enter" && active >= 0) { set(found[active]); list.hidden = true; e.preventDefault(); }
+      else if (e.key === "Escape") { list.hidden = true; }
     });
     return {
-      cells: [el("td", {}, own.length ? select : null, name), el("td", { class: "narrow" }, conc)],
-      read: () => select.value
-        ? { tube_id: select.value }
-        : { name: name.value, attrs: { concentration: conc.value } },
+      node: wrap,
+      input,
+      pick: set,
+      read: extra => picked ? { tube_id: picked.tube_id } : { name: input.value, attrs: extra },
     };
   }
 
-  function lineRow() {
+  function lineRow(from) {
     const service = el("select", { required: true },
-      state.me.services.map(s => el("option", { value: s.id }, s.name)));
-    const template = tubePicker("template");
-    const primer = tubePicker("primer");
-    const remarks = el("input", { maxlength: "200" });
+      state.me.services.map(s => el("option", { value: s.id, selected: from && from.service === s.id }, s.name)));
+
+    const templateLabel = el("td", { class: "muted" });
+    const size = el("input", { inputmode: "numeric" });
+    const conc = el("input", { inputmode: "decimal" });
+    let wasPicked = false;
+    const template = tubePicker("template", templateLabel, tube => {
+      // A tube of yours already has its size and concentration on record.
+      size.disabled = conc.disabled = !!tube;
+      if (tube) {
+        size.value = tube.size == null ? "" : tube.size;
+        conc.value = tube.concentration == null ? "" : tube.concentration;
+      } else if (wasPicked) {
+        size.value = conc.value = "";
+      }
+      wasPicked = !!tube;
+    });
+
+    const primerLabel = el("td", { class: "muted" });
+    const primerSource = el("select", {}, el("option", { value: "User" }, "User"), el("option", { value: "Core" }, "Core"));
+    const primer = tubePicker("primer", primerLabel, () => {});
+    const coreName = el("input", { required: true, hidden: true });
+    const primerCell = el("td", {}, primer.node, coreName);
+    const setSource = () => {
+      const core = primerSource.value === "Core";
+      primer.node.hidden = core; primer.input.required = !core;
+      coreName.hidden = !core; coreName.required = core;
+      primerLabel.textContent = core ? "" : (primerLabel.textContent || "");
+    };
+    primerSource.addEventListener("change", setSource);
+
+    if (from) {
+      const find = t => t.tube_id && (state.tubes || []).find(x => x.tube_id === t.tube_id);
+      const t = find(from.template);
+      if (t) template.pick(t);
+      else {
+        template.input.value = from.template.name || "";
+        template.pick(null);
+        if (from.template.size != null) size.value = from.template.size;
+        if (from.template.concentration != null) conc.value = from.template.concentration;
+      }
+      if (from.primer.source === "Core") { primerSource.value = "Core"; coreName.value = from.primer.name || ""; }
+      else {
+        const p = find(from.primer);
+        if (p) primer.pick(p); else { primer.input.value = from.primer.name || ""; primer.pick(null); }
+      }
+    }
+    setSource();
+
     const tr = el("tr", {},
-      el("td", {}, service), ...template.cells, ...primer.cells, el("td", {}, remarks),
-      el("td", {}, el("button", {
-        type: "button", class: "link", onclick: () => { if (tr.parentNode.children.length > 1) tr.remove(); },
-      }, "×")));
-    tr.readLine = () => ({ service: service.value, template: template.read(), primer: primer.read(), remarks: remarks.value });
+      el("td", { class: "muted" }, "—"), el("td", { class: "muted" }, "New"), el("td", {}, service),
+      el("td", { class: "muted" }, "User"), el("td", {}, template.node), templateLabel,
+      el("td", { class: "narrow" }, size), el("td", { class: "narrow" }, conc),
+      el("td", {}, primerSource), primerCell, primerLabel,
+      el("td", {}, el("div", { class: "row nowrap" },
+        el("button", {
+          type: "button", class: "danger", title: "Remove line",
+          onclick: () => { if (tr.parentNode.children.length > 1) tr.remove(); },
+        }, "×"),
+        el("button", {
+          type: "button", title: "Add a line below", onclick: () => tr.after(lineRow(tr.readView())),
+        }, "+"))));
+    tr.readLine = () => ({
+      service: service.value,
+      template: template.read({ insert_length: size.value, concentration: conc.value }),
+      primer: primerSource.value === "Core" ? { core: coreName.value } : primer.read({}),
+    });
+    // The same shape as a line of a placed order, so "+" copies this line.
+    tr.readView = () => {
+      const l = tr.readLine();
+      return {
+        service: l.service,
+        template: { tube_id: l.template.tube_id, name: template.input.value,
+          size: size.value || null, concentration: conc.value || null },
+        primer: primerSource.value === "Core" ? { source: "Core", name: coreName.value }
+          : { tube_id: l.primer.tube_id, name: primer.input.value },
+      };
+    };
     return tr;
   }
 
