@@ -276,17 +276,32 @@
 
   // ------------------------------------------------------------------ home
 
+  const isOpen = g => g.group_status === "active";
+
+  function groupLabel(g) {
+    if (g.group_status === "pending") return "waiting";
+    if (g.group_status === "refused") return "refused";
+    return g.manager ? "manager" : g.status;
+  }
+
+  function groupClass(g) {
+    if (g.group_status === "pending") return "pending";
+    if (g.group_status === "refused") return "refused";
+    return g.status;
+  }
+
   function renderHome(message) {
     const me = state.me;
     if (!me) return;
     if (!me.person) return renderProfile();
 
-    const approved = me.groups.filter(g => g.status === "approved");
-    const managing = me.groups.filter(g => g.manager);
+    // A group opened on the page waits for ATGC staff before anything works.
+    const approved = me.groups.filter(g => g.status === "approved" && isOpen(g));
+    const managing = me.groups.filter(g => g.manager && isOpen(g));
 
     const groupRows = me.groups.map(g => el("tr", {},
       el("td", {}, g.name), el("td", {}, g.pi_name),
-      el("td", {}, el("span", { class: "status " + g.status }, g.manager ? "manager" : g.status)),
+      el("td", {}, el("span", { class: "status " + groupClass(g) }, groupLabel(g))),
       el("td", {}, g.folder ? el("a", { href: g.folder, target: "_blank", rel: "noopener" }, "Group folder") : "")));
 
     show(
@@ -481,7 +496,7 @@
       if (!reply) return;
       state.tubes = reply.ok ? reply.data.tubes : [];
     }
-    const groups = state.me.groups.filter(g => g.status === "approved");
+    const groups = state.me.groups.filter(g => g.status === "approved" && isOpen(g));
     const group = el("select", { required: true }, groups.map(g => el("option", { value: g.group_id }, g.name)));
     const budget = el("select", { required: true });
     const fillBudgets = () => {
