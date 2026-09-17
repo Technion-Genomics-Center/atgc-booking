@@ -322,7 +322,8 @@
       el("div", { class: "card" },
         el("div", { class: "row" },
           approved.length ? el("button", { class: "primary", onclick: () => renderOrderForm() }, "New Sanger order") : null,
-          me.folder ? el("a", { href: me.folder, target: "_blank", rel: "noopener" }, "Results folder") : null)),
+          me.folder ? el("a", { href: me.folder, target: "_blank", rel: "noopener" }, "Results folder") : null,
+          me.staff ? el("button", { onclick: () => renderBench() }, "Staff") : null)),
       el("h2", {}, "Groups"),
       el("div", { class: "card" },
         me.groups.length
@@ -426,13 +427,7 @@
   // A template or primer from an earlier order is already at the centre, like
   // a core primer, so it gets none (Nitsan, 2026-09-17). Nothing to tick.
   function renderLabels(order, message) {
-    const labels = new Map();
-    for (const l of order.lines) {
-      for (const t of [l.template, l.primer]) {
-        if (t.new && t.tube_id && !labels.has(t.tube_id)) labels.set(t.tube_id, t);
-      }
-    }
-    const tubes = [...labels.values()];
+    const tubes = labelsOf(order);
     const go = el("button", { class: "primary" }, tubes.length ? "Print " + tubes.length : "No labels needed");
     if (!tubes.length && order.status !== "new") go.disabled = true;
     go.addEventListener("click", async () => {
@@ -454,18 +449,271 @@
           el("button", { class: "link", onclick: () => renderHome() }, "Back"))));
   }
 
+  // An order's own new tubes, each once - what its labels are.
+  function labelsOf(order) {
+    const seen = new Map();
+    for (const l of order.lines) {
+      for (const t of [l.template, l.primer]) {
+        if (t.new && t.tube_id && !seen.has(t.tube_id)) seen.set(t.tube_id, t);
+      }
+    }
+    return [...seen.values()];
+  }
+
   function printStickers(order, tubes) {
+    printSheet(tubes.map(t => [order, t]));
+  }
+
+  // One sticker per page, for any mix of orders: [[order, tube], ...].
+  function printSheet(pairs) {
     let sheet = document.getElementById("print-sheet");
     if (!sheet) {
       sheet = el("div", { id: "print-sheet" });
       document.body.append(sheet);
     }
-    const date = dateOf(order.created_at);
-    sheet.replaceChildren(...tubes.map(t => el("div", { class: "sticker" },
-      el("div", { class: "sticker-date" }, date),
+    sheet.replaceChildren(...pairs.map(([order, t]) => el("div", { class: "sticker" },
+      el("div", { class: "sticker-date" }, dateOf(order.created_at)),
       el("div", { class: "sticker-text" },
         el("b", {}, t.label || ""), el("span", {}, t.name || ""), el("span", {}, order.pi_name || "")))));
     window.print();
+  }
+
+  // ----------------------------------------------------------------- staff
+  //
+  // ATGC staff on the page: the bench's labels, plates, orders and waiting
+  // groups - the same rules as the staff app, from any PC (Nitsan, 2026-09-17).
+  // Managing people and billing stay in the staff app.
+
+  function staffTabs(on) {
+    const tab = (name, fn) => el("button", { class: name === on ? "tab on" : "tab", onclick: fn }, name);
+    return el("div", { class: "row tabs" },
+      tab("Labels", () => renderBench()), tab("Plates", () => renderPlates()),
+      tab("Orders", () => renderStaffOrders()), tab("Groups", () => renderStaffGroups()),
+      el("span", { class: "grow" }),
+      el("button", { class: "link", onclick: () => renderHome() }, "Back"));
+  }
+
+  function download(name, base64) {
+    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const blob = new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const a = el("a", { href: URL.createObjectURL(blob), download: name + ".xlsx" });
+    document.body.append(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+
+  async function downloadPlate(name) {
+    const reply = await call("bench_plate_file", { name }, "");
+    if (!reply) return;
+    if (!reply.ok) return renderPlates(reply.error);
+    download(reply.data.name, reply.data.data);
+  }
+
+  async function renderPlates(message, data) {
+    let view = data;
+    if (!view) {
+      const reply = await call("bench_plates", {}, "");
+      if (!reply) return;
+      if (!reply.ok) return renderHome(reply.error);
+      view = reply.data;
+    }
+    const exportNow = async () => {
+      const reply = await call("bench_export", {}, "");
+      if (!reply) return;
+      if (!reply.ok) return renderPlates(reply.error, view);
+      for (const f of reply.data.made) {
+        if (f.data) download(f.name, f.data); else await downloadPlate(f.name);
+      }
+      renderPlates(reply.data.made.length ? null : "Nothing to export: no started order.", reply.data);
+    };
+    show(staffTabs("Plates"),
+      message ? errorLine(message) : null,
+      el("div", { class: "card" },
+        el("div", { class: "row" }, el("button", { class: "primary", onclick: exportNow }, "Export")),
+        view.plates.length ? el("div", { class: "table-wrap", style: "margin-top:12px" }, el("table", {},
+          el("thead", {}, el("tr", {}, ["Plate", "Kind", "Wells", "Made", ""].map(h => el("th", {}, h)))),
+          el("tbody", {}, view.plates.map(p => el("tr", {},
+            el("td", {}, el("strong", {}, p.name)), el("td", {}, (p.family || "").toUpperCase()),
+            el("td", {}, String(p.wells)), el("td", {}, (p.created_at || "").replace("T", " ").slice(0, 16)),
+            el("td", {}, p.file ? el("button", { class: "link", onclick: () => downloadPlate(p.name) }, "Download") : "")))))) : null));
+  }
+
+  async function renderStaffOrders(message, filters) {
+    const f = filters || { status: "", group_id: "", q: "" };
+    const reply = await call("staff_orders", f, "");
+    if (!reply) return;
+    if (!reply.ok) return renderHome(reply.error);
+    const view = reply.data;
+    const status = el("select", {}, el("option", { value: "" }, ""),
+      ["new", "started", "in process", "completed", "cancelled"].map(x => el("option", { value: x, selected: f.status === x }, x)));
+    const group = el("select", {}, el("option", { value: "" }, ""),
+      view.groups.map(g => el("option", { value: g.group_id, selected: f.group_id === g.group_id }, g.name)));
+    const q = el("input", { value: f.q, placeholder: "Order, name or email" });
+    show(staffTabs("Orders"),
+      message ? errorLine(message) : null,
+      el("form", {
+        class: "card row", onsubmit: e => {
+          e.preventDefault();
+          renderStaffOrders(null, { status: status.value, group_id: group.value, q: q.value.trim() });
+        },
+      }, el("label", {}, "Status", status), el("label", {}, "Group", group), el("label", { class: "grow" }, "Find", q),
+        el("button", { class: "primary", type: "submit" }, "Show")),
+      el("div", { class: "card" },
+        view.orders.length ? el("div", { class: "table-wrap" }, el("table", {},
+          el("thead", {}, el("tr", {}, ["Order", "Placed", "Status", "Group", "By", "Lines"].map(h => el("th", {}, h)))),
+          el("tbody", {}, view.orders.map(o => el("tr", {},
+            el("td", {}, el("button", { class: "link", onclick: () => renderStaffOrder(o.order_id, null, f) }, "#" + o.order_id)),
+            el("td", {}, (o.created_at || "").replace("T", " ").slice(0, 16)),
+            el("td", {}, el("span", { class: "status " + o.status.replace(" ", "-") }, o.status)),
+            el("td", {}, o.group_name || ""), el("td", {}, o.by || ""), el("td", {}, String(o.lines))))))) : el("p", { class: "muted" }, "—"),
+        view.more ? el("p", { class: "muted small" }, "Newest " + view.orders.length + " shown.") : null));
+  }
+
+  async function renderStaffOrder(orderId, message, filters, data) {
+    let order = data;
+    if (!order) {
+      const reply = await call("staff_order", { order_id: orderId }, "");
+      if (!reply) return;
+      if (!reply.ok) return renderStaffOrders(reply.error, filters);
+      order = reply.data.order;
+    }
+    const act = async (op, args) => {
+      const reply = await call(op, Object.assign({ order_id: orderId }, args), "");
+      if (!reply) return;
+      if (!reply.ok) return renderStaffOrder(orderId, reply.error, filters, order);
+      renderStaffOrder(orderId, null, filters, reply.data.order);
+    };
+    const open = order.status !== "completed" && order.status !== "cancelled";
+    show(staffTabs("Orders"),
+      message ? errorLine(message) : null,
+      el("div", { class: "card" },
+        el("div", { class: "row" },
+          el("strong", {}, "#" + order.order_id),
+          el("span", { class: "status " + order.status.replace(" ", "-") }, order.status),
+          el("span", { class: "muted small" }, order.group_name + " · " + (order.by || "") + " · " + (order.by_email || "")),
+          el("span", { class: "muted small" }, "Budget " + (order.budget || "")),
+          el("span", { class: "grow" }),
+          open ? el("button", {
+            onclick: () => { if (confirm("Cancel order #" + order.order_id + "?")) act("staff_cancel", {}); },
+          }, "Cancel order") : null,
+          el("button", { class: "link", onclick: () => renderStaffOrders(null, filters) }, "All orders")),
+        el("div", { class: "table-wrap", style: "margin-top:10px" }, el("table", { class: "lines" },
+          el("thead", {}, el("tr", {}, LINE_HEADS.map(h => el("th", {}, h)), el("th", {}, ""))),
+          el("tbody", {}, order.lines.map(l => el("tr", {},
+            el("td", {}, l.line_id), el("td", {}, l.status), el("td", {}, l.service_name),
+            el("td", {}, l.template.source), el("td", {}, l.template.name || ""), el("td", {}, l.template.label || ""),
+            el("td", {}, l.template.size == null ? "" : String(l.template.size)),
+            el("td", {}, l.template.concentration == null ? "" : String(l.template.concentration)),
+            el("td", {}, l.primer.source), el("td", {}, l.primer.name || ""), el("td", {}, l.primer.label || ""),
+            el("td", {}, open && l.status !== "Done"
+              ? el("button", { class: "link", onclick: () => act("staff_line", { line_id: l.line_id, skip: l.status !== "Skip" }) },
+                l.status === "Skip" ? "Unskip" : "Skip")
+              : "")))))),
+        order.remarks ? el("p", { class: "muted small" }, order.remarks) : null));
+  }
+
+  async function renderStaffGroups(message, data) {
+    let view = data;
+    if (!view) {
+      const reply = await call("staff_groups", {}, "");
+      if (!reply) return;
+      if (!reply.ok) return renderHome(reply.error);
+      view = reply.data;
+    }
+    const decide = async (g, approve) => {
+      if (!approve && !confirm("Turn down " + g.name + "?")) return;
+      const reply = await call("staff_group_decide", { group_id: g.group_id, approve }, "");
+      if (!reply) return;
+      if (!reply.ok) return renderStaffGroups(reply.error, view);
+      renderStaffGroups(null, reply.data);
+    };
+    show(staffTabs("Groups"),
+      message ? errorLine(message) : null,
+      el("div", { class: "card" },
+        view.waiting.length ? el("div", { class: "table-wrap" }, el("table", {},
+          el("thead", {}, el("tr", {}, ["Group", "PI", "Faculty", "Institute", "Budget", "Manager", "Opened", ""].map(h => el("th", {}, h)))),
+          el("tbody", {}, view.waiting.map(g => el("tr", {},
+            el("td", {}, g.name), el("td", {}, g.pi_name || ""), el("td", {}, g.faculty || ""), el("td", {}, g.institute || ""),
+            el("td", {}, g.budgets.join(", ")), el("td", {}, g.managers.join(", ")),
+            el("td", {}, (g.created_at || "").replace("T", " ").slice(0, 16)),
+            el("td", {}, el("div", { class: "row" },
+              el("button", { class: "primary", onclick: () => decide(g, true) }, "Approve"),
+              el("button", { onclick: () => decide(g, false) }, "Turn down")))))))) : el("p", { class: "muted" }, "—")));
+  }
+
+  // ----------------------------------------------------------------- bench
+  //
+  // At the printer, for ATGC staff: every order whose labels are not printed.
+  // Not everything placed is brought in on the day, so the bench ticks the
+  // orders that arrived and prints theirs (Nitsan, 2026-09-17).
+
+  async function renderBench(message, data) {
+    let orders = data;
+    if (!orders) {
+      const reply = await call("bench_orders", {}, "");
+      if (!reply) return;
+      if (!reply.ok) return renderHome(reply.error);
+      orders = reply.data.orders;
+    }
+    const picked = new Set();
+    const go = el("button", { class: "primary", disabled: true }, "Print");
+    const count = () => {
+      const labels = orders.filter(o => picked.has(o.order_id)).reduce((n, o) => n + labelsOf(o).length, 0);
+      go.textContent = picked.size ? "Print " + labels + " · " + picked.size + " order" + (picked.size > 1 ? "s" : "") : "Print";
+      go.disabled = !picked.size;
+    };
+    const all = el("input", { type: "checkbox", title: "All" });
+    const boxes = orders.map(o => {
+      const box = el("input", { type: "checkbox" });
+      box.addEventListener("change", () => {
+        if (box.checked) picked.add(o.order_id); else picked.delete(o.order_id);
+        all.checked = picked.size === orders.length;
+        count();
+      });
+      return box;
+    });
+    all.addEventListener("change", () => {
+      boxes.forEach((b, i) => { b.checked = all.checked; if (all.checked) picked.add(orders[i].order_id); });
+      if (!all.checked) picked.clear();
+      count();
+    });
+
+    go.addEventListener("click", async () => {
+      const chosen = orders.filter(o => picked.has(o.order_id));
+      const pairs = [];
+      chosen.forEach(o => labelsOf(o).forEach(t => pairs.push([o, t])));
+      if (pairs.length) printSheet(pairs);
+      const reply = await call("bench_labels_printed", { order_ids: chosen.map(o => o.order_id) }, "");
+      if (!reply) return;
+      if (!reply.ok) return renderBench(reply.error, orders);
+      renderBench(null, reply.data.orders);
+    });
+
+    const rows = [];
+    orders.forEach((o, i) => {
+      const detail = el("tr", { class: "detail", hidden: true },
+        el("td", {}), el("td", { colspan: "6" }, el("div", { class: "table-wrap" }, el("table", { class: "lines" },
+          el("tbody", {}, o.lines.map(l => el("tr", {},
+            el("td", {}, l.line_id), el("td", {}, l.service_name),
+            el("td", {}, l.template.name || ""), el("td", {}, l.template.label || ""),
+            el("td", {}, l.primer.name || ""), el("td", {}, l.primer.source === "Core" ? "Core" : (l.primer.label || "")))))))));
+      rows.push(el("tr", {},
+        el("td", {}, boxes[i]),
+        el("td", {}, el("button", { class: "link", onclick: () => { detail.hidden = !detail.hidden; } }, "#" + o.order_id)),
+        el("td", {}, (o.created_at || "").replace("T", " ").slice(0, 16)),
+        el("td", {}, o.by || ""), el("td", {}, o.group_name || ""),
+        el("td", {}, String(o.lines.length)), el("td", {}, String(labelsOf(o).length))));
+      rows.push(detail);
+    });
+
+    show(staffTabs("Labels"),
+      message ? errorLine(message) : null,
+      el("div", { class: "card" },
+        orders.length ? el("div", { class: "table-wrap" }, el("table", {},
+          el("thead", {}, el("tr", {}, el("th", {}, all), ["Order", "Placed", "By", "Group", "Lines", "Labels"].map(h => el("th", {}, h)))),
+          el("tbody", {}, rows))) : el("p", { class: "muted" }, "—"),
+        el("div", { class: "row", style: "margin-top:10px" }, go,
+          el("button", { class: "link", onclick: () => renderBench() }, "Refresh"))));
   }
 
   // --------------------------------------------------------------- profile
@@ -535,6 +783,7 @@
       const reply = await call(op, Object.assign({ group_id: group.group_id }, args), "");
       if (!reply) return;
       if (!reply.ok) return renderMembers(group, reply.error, view);
+      if (reply.data.left) return refreshMe();          // handed the group over
       renderMembers(group, null, reply.data);
     };
     const address = el("input", { type: "email", required: true, autocomplete: "off" });
@@ -544,12 +793,15 @@
         el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {},
           view.members.map(m => el("tr", {},
             el("td", {}, m.name), el("td", {}, m.email), el("td", {}, m.phone_lab),
-            el("td", {}, m.manager ? el("span", { class: "status approved" }, "manager") : ""))),
+            el("td", {}, m.manager ? el("span", { class: "status approved" }, "manager") : ""),
+            el("td", {}, m.manager
+              ? el("button", { class: "link", onclick: () => again("set_manager", { email: m.email, manager: false }) }, "Not manager")
+              : el("button", { class: "link", onclick: () => again("set_manager", { email: m.email, manager: true }) }, "Make manager")))),
           view.invited.map(i => el("tr", {},
             el("td", { class: "muted" }, "—"), el("td", {}, i.email), el("td", {}, ""),
             el("td", {}, el("div", { class: "row" },
               el("span", { class: "status pending" }, "invited"),
-              el("button", { class: "link", onclick: () => again("withdraw", { email: i.email }) }, "Withdraw")))))))),
+              el("button", { class: "link", onclick: () => again("withdraw", { email: i.email }) }, "Withdraw"))), el("td", {})))))),
         el("form", {
           class: "row", style: "margin-top:12px", onsubmit: e => {
             e.preventDefault();
