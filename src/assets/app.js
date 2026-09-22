@@ -202,7 +202,45 @@
     who.replaceChildren();
     if (!state.session) return;
     who.append(el("span", {}, state.email || ""),
+      el("button", { class: "link", onclick: () => renderProfile() }, "Profile"),
       el("button", { class: "link", onclick: () => signOut() }, "Sign out"));
+  }
+
+  // ------------------------------------------------------------------ tabs
+  //
+  // Mock A's tabs across the top (design/booking, chosen 2026-09-22). Each
+  // screen names its tab; screens before sign-in have none.
+  const tabsBox = document.getElementById("tabs");
+
+  function setTab(on) {
+    const me = state.me;
+    if (!on || !state.session || !me || !me.person) {
+      tabsBox.hidden = true;
+      return;
+    }
+    const canOrder = me.groups.some(g => g.status === "approved" && isOpen(g));
+    const invited = (me.invitations || []).length;
+    const tab = (name, fn, badge) => el("button", { class: name === on ? "on" : "", onclick: fn },
+      name, badge ? el("span", { class: "badge" }, String(badge)) : null);
+    tabsBox.replaceChildren(
+      tab("My orders", () => renderHome()),
+      canOrder ? tab("New order", () => renderOrderForm()) : null,
+      tab("Groups", () => renderGroups(), invited),
+      me.staff ? tab("Staff", () => renderBench()) : null);
+    tabsBox.replaceChildren(...[...tabsBox.childNodes].filter(Boolean));
+    tabsBox.hidden = false;
+  }
+
+  function steps(status) {
+    // Where an order is: placed, labels printed, at the bench, results sent.
+    const order = ["new", "started", "in process", "completed"];
+    const at = order.indexOf(status);
+    if (at < 0) return null;
+    const names = [["Placed", ""], ["Labels printed", "bring the tubes"], ["In process", "at the bench"],
+      ["Completed", "results in your folder"]];
+    return el("div", { class: "steps" }, names.map(([name, hint], i) => el("div", {
+      class: "step" + (i < at || (i === at && at === 3) ? " done" : i === at ? " now" : ""),
+    }, name, hint ? el("div", { class: "muted small", style: "font-weight:400" }, hint) : null)));
   }
 
   // A "home" reply carries the orders too; they are kept apart from the rest.
@@ -234,6 +272,7 @@
   // --------------------------------------------------------------- sign in
 
   function renderSignIn(message) {
+    setTab(null);
     const email = el("input", { type: "email", autocomplete: "email", required: true, value: state.email || "" });
     const go = el("button", { class: "primary", type: "submit" }, "Send code");
     show(el("form", {
@@ -254,6 +293,7 @@
   }
 
   function renderCode(message) {
+    setTab(null);
     const code = el("input", { inputmode: "numeric", autocomplete: "one-time-code", maxlength: "6", pattern: "[0-9]{6}", required: true });
     show(el("form", {
       class: "card stack", onsubmit: async e => {
@@ -299,41 +339,70 @@
     const me = state.me;
     if (!me) return;
     if (!me.person) return renderProfile();
+    setTab("My orders");
 
     // A group opened on the page waits for ATGC staff before anything works.
     const approved = me.groups.filter(g => g.status === "approved" && isOpen(g));
     const invitations = me.invitations || [];
 
+    show(
+      message ? errorLine(message) : null,
+      el("div", { class: "grid" },
+        el("div", {},
+          approved.length ? el("div", { class: "card accent cta" },
+            el("div", {}, el("b", {}, "Ready to send samples?"),
+              el("div", { class: "muted small" }, "Place the order, print the labels, bring the tubes to the core.")),
+            el("button", { class: "primary", onclick: () => renderOrderForm() }, "New Sanger order")) : null,
+          el("h2", {}, "Orders"),
+          renderOrderList()),
+        el("aside", {},
+          me.folder ? el("h2", {}, "Your results") : null,
+          me.folder ? el("a", { class: "card folder", href: me.folder, target: "_blank", rel: "noopener" },
+            el("div", { class: "ico" }, "⌂"),
+            el("div", {}, el("b", {}, "Results folder"), el("div", { class: "muted small" }, "OneDrive · about 24 h after the run"))) : null,
+          el("h2", {}, "Groups"),
+          el("div", { class: "card" },
+            invitations.map(i => el("div", { class: "group-row" },
+              el("div", {}, el("b", {}, i.name), el("div", { class: "muted small" }, "Invitation from " + (i.by || ""))),
+              el("button", { class: "primary", onclick: () => answerInvite(i, true) }, "Accept"))),
+            me.groups.map(g => el("div", { class: "group-row" },
+              el("div", {}, el("b", {}, g.name), el("div", { class: "muted small" }, "PI " + (g.pi_name || ""))),
+              el("span", { class: "status " + groupClass(g) }, groupLabel(g)))),
+            !me.groups.length && !invitations.length ? el("p", { class: "muted small" }, "—") : null,
+            el("div", { class: "row", style: "margin-top:10px" },
+              el("button", { class: "link", onclick: () => renderGroups() }, "All groups"))),
+          el("div", { class: "card plain" },
+            el("div", { class: "small" }, el("b", { style: "color:var(--navy)" }, "Sample requirements"),
+              el("div", { class: "muted" }, "Concentrations, volumes and primers")),
+            me.core_primers_url ? el("a", { href: me.core_primers_url, target: "_blank", rel: "noopener" }, "Core primers ↗") : null))),
+    );
+  }
+
+  // Groups: invitations, your groups, and opening a new one.
+  function renderGroups(message) {
+    const me = state.me;
+    if (!me) return;
+    setTab("Groups");
+    const invitations = me.invitations || [];
     const groupRows = me.groups.map(g => el("tr", {},
-      el("td", {}, g.name), el("td", {}, g.pi_name),
+      el("td", {}, el("b", {}, g.name)), el("td", {}, g.pi_name),
       el("td", {}, el("span", { class: "status " + groupClass(g) }, groupLabel(g))),
       el("td", {}, g.manager && isOpen(g) ? el("button", { class: "link", onclick: () => renderMembers(g) }, "Members") : ""),
       el("td", {}, g.folder ? el("a", { href: g.folder, target: "_blank", rel: "noopener" }, "Group folder") : "")));
-
     show(
       message ? errorLine(message) : null,
+      invitations.length ? el("h2", {}, "Invitations") : null,
       invitations.length ? el("div", { class: "card invite" },
-        el("h2", {}, "Invitations (" + invitations.length + ")"),
         el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {}, invitations.map(i => el("tr", {},
-          el("td", {}, i.name), el("td", {}, i.pi_name), el("td", { class: "muted small" }, i.by || ""),
+          el("td", {}, el("b", {}, i.name)), el("td", {}, i.pi_name), el("td", { class: "muted small" }, "from " + (i.by || "")),
           el("td", {}, el("div", { class: "row" },
             el("button", { class: "primary", onclick: () => answerInvite(i, true) }, "Accept"),
             el("button", { onclick: () => answerInvite(i, false) }, "Decline"))))))))) : null,
+      el("h2", {}, "Your groups"),
       el("div", { class: "card" },
-        el("div", { class: "row" },
-          approved.length ? el("button", { class: "primary", onclick: () => renderOrderForm() }, "New Sanger order") : null,
-          me.folder ? el("a", { href: me.folder, target: "_blank", rel: "noopener" }, "Results folder") : null,
-          me.staff ? el("button", { onclick: () => renderBench() }, "Staff") : null)),
-      el("h2", {}, "Groups"),
-      el("div", { class: "card" },
-        me.groups.length
-          ? el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {}, groupRows)))
-          : null,
-        el("div", { class: "row", style: "margin-top:10px" },
-          el("button", { onclick: () => renderOpenGroup() }, "Open a group"),
-          el("button", { class: "link", onclick: () => renderProfile() }, "Profile"))),
-      el("h2", {}, "Orders"),
-      renderOrderList(),
+        me.groups.length ? el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {}, groupRows))) : el("p", { class: "muted" }, "—"),
+        el("div", { class: "row", style: "margin-top:12px" },
+          el("button", { onclick: () => renderOpenGroup() }, "Open a group"))),
     );
   }
 
@@ -385,7 +454,7 @@
     for (const [order, mine] of all) {
       const printable = order.status === "new" || order.status === "started";
       box.append(el("div", { class: "card" },
-        el("div", { class: "row" },
+        el("div", { class: "order-head" },
           el("strong", {}, "#" + order.order_id),
           el("span", { class: "status " + order.status.replace(" ", "-") }, order.status),
           el("span", { class: "muted small" }, order.group_name + (mine ? "" : " · " + order.by)),
@@ -396,6 +465,7 @@
           mine && order.status === "new"
             ? el("button", { class: "link", onclick: () => cancelOrder(order.order_id) }, "Cancel")
             : null),
+        steps(order.status),
         el("div", { class: "table-wrap" }, el("table", { class: "lines" },
           el("thead", {}, el("tr", {}, LINE_HEADS.map(h => el("th", {}, h)))),
           el("tbody", {}, order.lines.map(l => el("tr", {},
@@ -428,6 +498,7 @@
   // A template or primer from an earlier order is already at the centre, like
   // a core primer, so it gets none (Nitsan, 2026-09-17). Nothing to tick.
   function renderLabels(order, message) {
+    setTab("My orders");
     const tubes = labelsOf(order);
     const go = el("button", { class: "primary" }, tubes.length ? "Print " + tubes.length : "No labels needed");
     if (!tubes.length && order.status !== "new") go.disabled = true;
@@ -511,6 +582,7 @@
   }
 
   async function renderPlates(message, data) {
+    setTab("Staff");
     let view = data;
     if (!view) {
       const reply = await call("bench_plates", {}, "");
@@ -540,6 +612,7 @@
   }
 
   async function renderStaffOrders(message, filters) {
+    setTab("Staff");
     const f = filters || { status: "", group_id: "", q: "" };
     const reply = await call("staff_orders", f, "");
     if (!reply) return;
@@ -571,6 +644,7 @@
   }
 
   async function renderStaffOrder(orderId, message, filters, data) {
+    setTab("Staff");
     let order = data;
     if (!order) {
       const reply = await call("staff_order", { order_id: orderId }, "");
@@ -620,6 +694,7 @@
   }
 
   async function renderStaffGroups(message, data) {
+    setTab("Staff");
     let view = data;
     if (!view) {
       const reply = await call("staff_groups", {}, "");
@@ -655,6 +730,7 @@
   // orders that arrived and prints theirs (Nitsan, 2026-09-17).
 
   async function renderBench(message, data) {
+    setTab("Staff");
     let orders = data;
     if (!orders) {
       const reply = await call("bench_orders", {}, "");
@@ -726,6 +802,7 @@
   // --------------------------------------------------------------- profile
 
   function renderProfile(message) {
+    setTab("-");
     const p = (state.me && state.me.person) || {};
     const name = el("input", { required: true, value: p.name || "", autocomplete: "name", placeholder: "Full name, in English" });
     const lab = el("input", { value: p.phone_lab || "", autocomplete: "tel" });
@@ -750,6 +827,7 @@
   // ---------------------------------------------------------------- groups
 
   function renderOpenGroup(message) {
+    setTab("Groups");
     const f = {
       name: el("input", { required: true }),
       pi_name: el("input", { required: true, placeholder: "Surname Name" }),
@@ -796,6 +874,7 @@
 
   // Groups are never listed: a manager invites people by address.
   async function renderMembers(group, message, data) {
+    setTab("Groups");
     let view = data;
     if (!view) {
       const reply = await call("members", { group_id: group.group_id }, "");
@@ -839,6 +918,7 @@
   // ----------------------------------------------------------------- order
 
   async function renderOrderForm(message, from) {
+    setTab("New order");
     if (!state.tubes) {
       const reply = await call("tubes", {}, "");
       if (!reply) return;

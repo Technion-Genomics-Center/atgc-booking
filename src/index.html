@@ -4,14 +4,26 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ATGC booking</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Raleway:wght@400;600;700&family=Roboto:wght@300;400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="assets/page.css">
 </head>
 <body>
-<header class="bar">
-  <span class="brand">ATGC booking</span>
-  <span id="who" class="who"></span>
-</header>
-<main id="app" aria-live="polite"></main>
+<div class="page">
+  <header class="masthead">
+    <img class="logo" src="assets/atgc_logo.png" alt="Azrieli Technion Genomics Center">
+    <h1>Sanger Sequencing<span>Order, track and collect your results</span></h1>
+    <div id="who" class="who"></div>
+  </header>
+  <nav id="tabs" class="maintabs" hidden></nav>
+  <div class="rule"></div>
+  <main id="app" aria-live="polite"></main>
+  <footer class="foot">
+    <span>Azrieli Technion Genomics Center · Technion</span>
+    <a href="https://atgc.net.technion.ac.il/" target="_blank" rel="noopener">atgc.net.technion.ac.il</a>
+  </footer>
+</div>
 <div id="busy" class="busy" hidden><span class="dot"></span><span id="busy-text"></span></div>
 <script src="config.js"></script>
 <script src="assets/seal.js"></script>

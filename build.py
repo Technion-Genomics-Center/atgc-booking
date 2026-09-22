@@ -69,6 +69,8 @@ def main():
         if p.suffix.lower() not in ALLOWED:
             failures.append("not a page or asset: %s" % p.relative_to(SRC))
             continue
+        if p.suffix.lower() in (".png", ".ico"):
+            continue                          # an image: nothing in it to leak
         text = p.read_text(encoding="utf-8")
         for pattern, what in FORBIDDEN:
             if pattern.search(text):
