@@ -131,6 +131,11 @@
       }
       // An older letterbox answers at once; do not hammer it.
       if (Date.now() - asked < 1500) await sleep(1500);
+      // Letterbox v4 knows whether the server is collecting at all.
+      const ping = await fetch(C.letterboxUrl + sep + "op=ping").then(r => r.json()).catch(() => ({}));
+      if (ping.awake === false) {
+        throw new Error("The booking service is down at the moment. ATGC has been told - please try again later.");
+      }
     }
     throw new Error("No answer yet. Please try again in a minute.");
   }
