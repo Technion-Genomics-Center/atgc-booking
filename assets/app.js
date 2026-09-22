@@ -983,6 +983,11 @@
   // One box for a tube: type a name for a new one, or find one of yours by name
   // or label - hundreds of them - and pick it. Typing a name or label that is
   // exactly one of yours picks it too, which is what the server would do anyway.
+  //
+  // A template's source chooses the mode (Nitsan, 2026-09-22): "new" is a tube
+  // the user brings - typed, no list, a new label even under a name used
+  // before; "old" is one already at the core - found
+  // by name or label and picked from the list, never typed free.
   function tubePicker(kind, labelCell, onPick) {
     const own = () => (state.tubes || []).filter(t => t.kind === kind);
     const input = el("input", { required: true, autocomplete: "off", spellcheck: "false" });
@@ -990,16 +995,25 @@
     const wrap = el("div", { class: "picker" }, input, list);
     let picked = null;
     let active = -1;
+    let mode = "any";
+    const sameAs = typed => own().find(t => t.name === typed) ||
+      own().find(t => t.label.toLowerCase() === typed.toLowerCase()) || null;
 
+    const check = () => {
+      const typed = input.value.trim();
+      input.setCustomValidity(mode === "old" && typed && !picked ? "Pick one of your templates from the list." : "");
+    };
     const set = tube => {
-      picked = tube;
-      if (tube) input.value = tube.name;
-      input.classList.toggle("linked", !!tube);
-      labelCell.textContent = tube ? tube.label : (input.value.trim() ? "new" : "");
-      labelCell.classList.toggle("muted", !tube);
-      onPick(tube);
+      picked = mode === "new" ? null : tube;
+      if (picked) input.value = picked.name;
+      input.classList.toggle("linked", !!picked);
+      labelCell.textContent = picked ? picked.label : (input.value.trim() && mode !== "old" ? "new" : "");
+      labelCell.classList.toggle("muted", !picked);
+      check();
+      onPick(picked);
     };
     const matches = () => {
+      if (mode === "new") return [];
       const q = input.value.trim().toLowerCase();
       return own().filter(t => !q || t.name.toLowerCase().includes(q) || t.label.toLowerCase().includes(q)).slice(0, 8);
     };
@@ -1022,8 +1036,7 @@
     input.addEventListener("focus", draw);
     input.addEventListener("blur", () => { list.hidden = true; });
     input.addEventListener("input", () => {
-      const typed = input.value.trim();
-      set(own().find(t => t.name === typed) || own().find(t => t.label.toLowerCase() === typed.toLowerCase()) || null);
+      set(sameAs(input.value.trim()));
       active = -1;
       draw();
     });
@@ -1039,7 +1052,16 @@
       node: wrap,
       input,
       pick: set,
-      read: extra => picked ? { tube_id: picked.tube_id } : { name: input.value, attrs: extra },
+      setMode: m => {
+        if (m === mode) return;
+        mode = m;
+        input.value = "";
+        set(null);
+        input.setCustomValidity("");
+        input.placeholder = m === "old" ? "name or label" : "";
+      },
+      read: extra => picked ? { tube_id: picked.tube_id }
+        : Object.assign({ name: input.value, attrs: extra }, mode === "new" ? { new: true } : {}),
     };
   }
 
@@ -1062,6 +1084,9 @@
       }
       wasPicked = !!tube;
     });
+    const templateSource = el("select", {}, el("option", { value: "User" }, "User"), el("option", { value: "Core" }, "Core"));
+    const setTemplateSource = () => template.setMode(templateSource.value === "Core" ? "old" : "new");
+    templateSource.addEventListener("change", setTemplateSource);
 
     const primerLabel = el("td", { class: "muted" });
     const primerSource = el("select", {}, el("option", { value: "User" }, "User"), el("option", { value: "Core" }, "Core"));
@@ -1081,6 +1106,8 @@
     if (from) {
       const find = t => t.tube_id && (state.tubes || []).find(x => x.tube_id === t.tube_id);
       const t = find(from.template);
+      templateSource.value = t ? "Core" : "User";
+      setTemplateSource();
       if (t) template.pick(t);
       else {
         template.input.value = from.template.name || "";
@@ -1093,13 +1120,15 @@
         const p = find(from.primer);
         if (p) primer.pick(p); else { primer.input.value = from.primer.name || ""; primer.pick(null); }
       }
+    } else {
+      setTemplateSource();
     }
     setSource();
 
     const comment = el("input", { maxlength: "200", value: (from && from.remarks) || "" });
     const tr = el("tr", {},
       el("td", { class: "muted" }, "—"), el("td", { class: "muted" }, "New"), el("td", {}, service),
-      el("td", { class: "muted" }, "User"), el("td", {}, template.node), templateLabel,
+      el("td", {}, templateSource), el("td", {}, template.node), templateLabel,
       el("td", { class: "narrow" }, size), el("td", { class: "narrow" }, conc),
       el("td", {}, primerSource), primerCell, primerLabel,
       el("td", { class: "comment" }, comment),
