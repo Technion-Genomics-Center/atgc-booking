@@ -1,4 +1,4 @@
-// The ATGC booking page.
+// ATGC Booking - the page (the app's name: Nitsan, 2026-09-22).
 //
 // Everything this page sends is sealed to the server's key before it leaves the
 // browser (seal.js), dropped in the letterbox, and answered by the lab's server,
