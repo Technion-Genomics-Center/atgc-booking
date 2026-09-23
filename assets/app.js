@@ -508,7 +508,7 @@
     const go = el("button", { class: "primary" }, tubes.length ? "Print " + tubes.length : "No labels needed");
     if (!tubes.length && order.status !== "new") go.disabled = true;
     go.addEventListener("click", async () => {
-      if (tubes.length) printStickers(order, tubes);
+      if (tubes.length) await printStickers(order, tubes);
       const reply = await call("labels_printed", { order_id: order.order_id, tube_ids: tubes.map(t => t.tube_id) }, "");
       if (!reply) return;
       if (!reply.ok) return renderLabels(order, reply.error);
@@ -537,8 +537,18 @@
     return [...seen.values()];
   }
 
-  function printStickers(order, tubes) {
-    printSheet(tubes.map(t => [order, t]));
+  // On the computer with the lab's label printer, straight to it; anywhere
+  // else, the browser's own printing (Nitsan, 2026-09-23).
+  async function printStickers(order, tubes) {
+    await printPairs(tubes.map(t => [order, t]));
+  }
+
+  async function printPairs(pairs) {
+    const done = await Dymo.print(pairs.map(([order, t]) => ({
+      label: t.label || "", name: t.name || "", pi: order.pi_name || "",
+      date: dateOf(order.created_at),
+    }))).catch(() => false);
+    if (!done) printSheet(pairs);
   }
 
   // One sticker per page, for any mix of orders: [[order, tube], ...].
@@ -770,7 +780,7 @@
       const chosen = orders.filter(o => picked.has(o.order_id));
       const pairs = [];
       chosen.forEach(o => labelsOf(o).forEach(t => pairs.push([o, t])));
-      if (pairs.length) printSheet(pairs);
+      if (pairs.length) await printPairs(pairs);
       const reply = await call("bench_labels_printed", { order_ids: chosen.map(o => o.order_id) }, "");
       if (!reply) return;
       if (!reply.ok) return renderBench(reply.error, orders);
