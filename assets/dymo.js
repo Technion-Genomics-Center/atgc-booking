@@ -104,19 +104,22 @@
     }).join("&");
   }
 
-  // The printer's name, or null where there is none. Asked once per page load.
+  // The printer's name, or null where there is none. A printer once found is
+  // remembered; not finding one is not, so plugging it in is enough - no
+  // reloading the page (2026-09-24).
   function printer() {
     if (found) return found;
-    found = post("StatusConnected", undefined, 4000).then(function (text) {
+    var asking = post("StatusConnected", undefined, 4000).then(function (text) {
       if (text.indexOf("true") < 0) throw new Error("no DYMO");
       return post("GetPrinters", undefined, 4000);
     }).then(function (printers) {
       var name = /<Name>([^<]+)<\/Name>/.exec(printers);
       var connected = /<IsConnected>([^<]+)<\/IsConnected>/.exec(printers);
       if (!name || !connected || connected[1].toLowerCase() !== "true") throw new Error("no DYMO");
+      found = Promise.resolve(name[1]);
       return name[1];
     }).catch(function () { return null; });
-    return found;
+    return asking;
   }
 
   // Print the stickers, one after another. Resolves false where there is no
