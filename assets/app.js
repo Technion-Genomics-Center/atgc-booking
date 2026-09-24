@@ -434,14 +434,59 @@
     }
   }
 
-  // The order table follows Bookitlab's request-lines table, column for column
-  // with Service added because one order mixes services.
+  // The order table follows Bookitlab's request-lines table, column for column.
+  // The Service column stays although the order now has one service: the bench
+  // reads it line by line, as Bookitlab's table did.
   const LINE_HEADS = ["ID", "Status", "Service", "Template source", "Template name", "Template label",
     "Size", "Conc ng/ul", "Primer source", "Primer name", "Primer label", "Comment"];
+
+  const lineHeads = service => LINE_HEADS.map(h => h === "Size" ? sizeLabel(service) : h);
+
+  // The size column says what it measures, which is not the same thing for a
+  // PCR product and a plasmid (the bench, 2026-09-23).
+  const SIZE = "\u0000size";
+  const sizeLabel = service => (service || "").includes("pcr")
+    ? "Amplicon size (bps)" : "Seq length (bps)";
+
+  // The new-order table: no id, status or service - the service is the
+  // order's, and the rest belongs to a placed order.
+  const FORM_HEADS = ["Template source", "Template name", "Template label", SIZE, "Conc ng/ul",
+    "Primer source", "Primer name", "Primer label", ""];
+
+  // Where a tube comes from. A template was never the core's to give.
+  const TEMPLATE_SOURCES = [["User", "User"], ["Previous", "Previous submission"]];
+  const PRIMER_SOURCES = TEMPLATE_SOURCES.concat([["Core", "Core"]]);
 
   function dateOf(stamp) {
     const d = (stamp || "").slice(0, 10).split("-");
     return d.length === 3 ? d[2] + "/" + d[1] + "/" + d[0] : "";
+  }
+
+  // The researcher's remark on their order: one per order, dated, and theirs
+  // to change or take back (the bench, 2026-09-23).
+  function orderRemark(order) {
+    const box = el("div", { class: "remark" });
+    const show = () => box.replaceChildren(
+      el("p", { class: "muted small" }, order.remarks || "—",
+        order.remarks_at ? el("span", { class: "muted small" }, " · " + dateOf(order.remarks_at)) : null),
+      el("button", { class: "link", onclick: () => edit() }, order.remarks ? "Edit comment" : "Add a comment"));
+    const edit = () => {
+      const text = el("textarea", { rows: "2", maxlength: "1000" });
+      text.value = order.remarks || "";
+      const save = async () => {
+        const reply = await call("order_remarks", { order_id: order.order_id, remarks: text.value }, "");
+        if (!reply || !reply.ok) return;
+        setOrders(reply.data);
+        renderHome();
+      };
+      box.replaceChildren(text, el("div", { class: "row" },
+        el("button", { onclick: save }, "Save"),
+        order.remarks ? el("button", { class: "link", onclick: () => { text.value = ""; save(); } }, "Delete") : null,
+        el("button", { class: "link", onclick: show }, "Cancel")));
+      text.focus();
+    };
+    show();
+    return box;
   }
 
   function renderOrderList() {
@@ -472,7 +517,7 @@
             : null),
         steps(order.status),
         el("div", { class: "table-wrap" }, el("table", { class: "lines" },
-          el("thead", {}, el("tr", {}, LINE_HEADS.map(h => el("th", {}, h)))),
+          el("thead", {}, el("tr", {}, lineHeads(order.service).map(h => el("th", {}, h)))),
           el("tbody", {}, order.lines.map(l => el("tr", {},
             el("td", {}, l.line_id), el("td", {}, l.status), el("td", {}, l.service_name),
             el("td", {}, l.template.source), el("td", {}, l.template.name || ""), el("td", {}, l.template.label || ""),
@@ -480,7 +525,8 @@
             el("td", {}, l.template.concentration == null ? "" : String(l.template.concentration)),
             el("td", {}, l.primer.source), el("td", {}, l.primer.name || ""), el("td", {}, l.primer.label || ""),
             el("td", { class: "comment" }, l.remarks || "")))))),
-        order.remarks ? el("p", { class: "muted small" }, order.remarks) : null));
+        mine ? orderRemark(order) : (order.remarks
+          ? el("p", { class: "muted small" }, order.remarks) : null)));
     }
     return box;
   }
@@ -658,6 +704,18 @@
         view.more ? el("p", { class: "muted small" }, "Newest " + view.orders.length + " shown.") : null));
   }
 
+  // Staff's note on one line, saved when the box is left. Researchers write on
+  // the order, staff on the line (the bench, 2026-09-23).
+  function staffRemark(line, act) {
+    const box = el("input", { class: "comment-input", maxlength: "200", value: line.remarks || "",
+      title: line.remarks_at ? "Written " + dateOf(line.remarks_at) : "" });
+    box.addEventListener("change", () => {
+      if (box.value.trim() === (line.remarks || "").trim()) return;
+      act("staff_line_remarks", { line_id: line.line_id, remarks: box.value });
+    });
+    return box;
+  }
+
   async function renderStaffOrder(orderId, message, filters, data) {
     setTab("Staff");
     let order = data;
@@ -688,14 +746,15 @@
           }, "Cancel order") : null,
           el("button", { class: "link", onclick: () => renderStaffOrders(null, filters) }, "All orders")),
         el("div", { class: "table-wrap", style: "margin-top:10px" }, el("table", { class: "lines" },
-          el("thead", {}, el("tr", {}, LINE_HEADS.map(h => el("th", {}, h)), el("th", {}, ""))),
+          el("thead", {}, el("tr", {}, lineHeads(order.service).map(h => el("th", {}, h)), el("th", {}, ""))),
           el("tbody", {}, order.lines.map(l => el("tr", {},
             el("td", {}, l.line_id), el("td", {}, l.status), el("td", {}, l.service_name),
             el("td", {}, l.template.source), el("td", {}, l.template.name || ""), el("td", {}, l.template.label || ""),
             el("td", {}, l.template.size == null ? "" : String(l.template.size)),
             el("td", {}, l.template.concentration == null ? "" : String(l.template.concentration)),
             el("td", {}, l.primer.source), el("td", {}, l.primer.name || ""), el("td", {}, l.primer.label || ""),
-            el("td", { class: "comment" }, l.remarks || "", l.repeats ? el("span", { class: "status started" }, " repeat " + l.repeats) : null),
+            el("td", { class: "comment" }, staffRemark(l, act),
+              l.repeats ? el("span", { class: "status started" }, " repeat " + l.repeats) : null),
             el("td", {}, el("div", { class: "row nowrap" },
               (l.status === "In Work" || l.status === "Done") && order.status !== "cancelled"
                 ? el("button", {
@@ -955,15 +1014,25 @@
     group.addEventListener("change", fillBudgets);
     fillBudgets();
 
+    // One service to an order (the bench, 2026-09-23): chosen here, once, and
+    // every line of the order runs it.
+    const service = el("select", { required: true }, state.me.services.map(s =>
+      el("option", { value: s.id, selected: from && from.service === s.id }, s.name)));
+    const sizeHead = el("th", {});
+    const setSizeHead = () => { sizeHead.textContent = sizeLabel(service.value); };
+    service.addEventListener("change", setSizeHead);
+    setSizeHead();
+
     const body = el("tbody");
-    if (from) from.lines.forEach(l => body.append(lineRow(l)));
-    else body.append(lineRow());
+    const addRow = from => body.append(lineRow(from, service));
+    if (from) from.lines.forEach(l => addRow(l));
+    else addRow();
     const remarks = el("textarea", { rows: "3", maxlength: "1000" });
 
     show(el("form", {
       class: "card", onsubmit: async e => {
         e.preventDefault();
-        const lines = [...body.children].map(tr => tr.readLine());
+        const lines = [...body.children].map(tr => tr.readLine(service.value));
         const reply = await call("place_order", { group_id: group.value, budget: budget.value, lines, remarks: remarks.value }, "");
         if (!reply) return;
         if (!reply.ok) {
@@ -975,14 +1044,17 @@
         renderHome();
       },
     }, el("h2", {}, "New Sanger order"),
-      el("div", { class: "row" }, el("label", {}, "Group", group), el("label", {}, "Budget", budget),
+      el("div", { class: "row" }, el("label", {}, "Service", service),
+        el("label", {}, "Group", group), el("label", {}, "Budget", budget),
         el("span", { class: "grow" }),
         state.me.core_primers_url
           ? el("a", { class: "button", href: state.me.core_primers_url, target: "_blank", rel: "noopener" }, "Core primers")
           : null),
       el("div", { class: "table-wrap", style: "margin-top:12px" }, el("table", { class: "lines form" },
-        el("thead", {}, el("tr", {}, LINE_HEADS.map(h => el("th", {}, h)), el("th", {}, ""))),
+        el("thead", {}, el("tr", {}, FORM_HEADS.map(h => h === SIZE ? sizeHead : el("th", {}, h)))),
         body)),
+      el("div", { class: "row", style: "margin-top:8px" },
+        el("button", { type: "button", onclick: () => addRow() }, "Add a row")),
       el("label", { style: "margin-top:12px" }, "Comments", remarks),
       el("div", { class: "row", style: "margin-top:10px" },
         el("button", { class: "primary", type: "submit" }, "Place order"),
@@ -1075,10 +1147,7 @@
     };
   }
 
-  function lineRow(from) {
-    const service = el("select", { required: true },
-      state.me.services.map(s => el("option", { value: s.id, selected: from && from.service === s.id }, s.name)));
-
+  function lineRow(from, service) {
     const templateLabel = el("td", { class: "muted" });
     const size = el("input", { inputmode: "numeric" });
     const conc = el("input", { inputmode: "decimal" });
@@ -1094,12 +1163,14 @@
       }
       wasPicked = !!tube;
     });
-    const templateSource = el("select", {}, el("option", { value: "User" }, "User"), el("option", { value: "Core" }, "Core"));
-    const setTemplateSource = () => template.setMode(templateSource.value === "Core" ? "old" : "new");
+    const sourceSelect = options => el("select", {},
+      options.map(([value, text]) => el("option", { value }, text)));
+    const templateSource = sourceSelect(TEMPLATE_SOURCES);
+    const setTemplateSource = () => template.setMode(templateSource.value === "Previous" ? "old" : "new");
     templateSource.addEventListener("change", setTemplateSource);
 
     const primerLabel = el("td", { class: "muted" });
-    const primerSource = el("select", {}, el("option", { value: "User" }, "User"), el("option", { value: "Core" }, "Core"));
+    const primerSource = sourceSelect(PRIMER_SOURCES);
     const primer = tubePicker("primer", primerLabel, () => {});
     const coreName = el("select", { required: true, hidden: true },
       el("option", { value: "" }, ""),
@@ -1110,13 +1181,16 @@
       primer.node.hidden = core; primer.input.required = !core;
       coreName.hidden = !core; coreName.required = core;
       primerLabel.textContent = core ? "" : (primerLabel.textContent || "");
+      // "User" is a primer they are sending: a typed name, no list to pick from
+      // (Nitsan, 2026-09-23). The list belongs to the other two.
+      if (!core) primer.setMode(primerSource.value === "Previous" ? "old" : "new");
     };
     primerSource.addEventListener("change", setSource);
 
     if (from) {
       const find = t => t.tube_id && (state.tubes || []).find(x => x.tube_id === t.tube_id);
       const t = find(from.template);
-      templateSource.value = t ? "Core" : "User";
+      templateSource.value = t ? "Previous" : "User";
       setTemplateSource();
       if (t) template.pick(t);
       else {
@@ -1128,6 +1202,8 @@
       if (from.primer.source === "Core") { primerSource.value = "Core"; coreName.value = from.primer.name || ""; }
       else {
         const p = find(from.primer);
+        primerSource.value = p ? "Previous" : "User";
+        setSource();
         if (p) primer.pick(p); else { primer.input.value = from.primer.name || ""; primer.pick(null); }
       }
     } else {
@@ -1135,37 +1211,32 @@
     }
     setSource();
 
-    const comment = el("input", { maxlength: "200", value: (from && from.remarks) || "" });
     const tr = el("tr", {},
-      el("td", { class: "muted" }, "—"), el("td", { class: "muted" }, "New"), el("td", {}, service),
       el("td", {}, templateSource), el("td", {}, template.node), templateLabel,
       el("td", { class: "narrow" }, size), el("td", { class: "narrow" }, conc),
       el("td", {}, primerSource), primerCell, primerLabel,
-      el("td", { class: "comment" }, comment),
       el("td", {}, el("div", { class: "row nowrap" },
         el("button", {
           type: "button", class: "danger", title: "Remove line",
           onclick: () => { if (tr.parentNode.children.length > 1) tr.remove(); },
         }, "×"),
         el("button", {
-          type: "button", title: "Add a line below", onclick: () => tr.after(lineRow(tr.readView())),
+          type: "button", title: "Copy this line", onclick: () => tr.after(lineRow(tr.readView(), service)),
         }, "+"))));
-    tr.readLine = () => ({
-      service: service.value,
+    tr.readLine = chosen => ({
+      service: chosen,
       template: template.read({ insert_length: size.value, concentration: conc.value }),
       primer: primerSource.value === "Core" ? { core: coreName.value } : primer.read({}),
-      remarks: comment.value,
     });
     // The same shape as a line of a placed order, so "+" copies this line.
     tr.readView = () => {
-      const l = tr.readLine();
+      const l = tr.readLine(service ? service.value : "");
       return {
         service: l.service,
         template: { tube_id: l.template.tube_id, name: template.input.value,
           size: size.value || null, concentration: conc.value || null },
         primer: primerSource.value === "Core" ? { source: "Core", name: coreName.value }
           : { tube_id: l.primer.tube_id, name: primer.input.value },
-        remarks: comment.value,
       };
     };
     return tr;
