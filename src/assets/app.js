@@ -227,12 +227,18 @@
     const invited = (me.invitations || []).length;
     const tab = (name, fn, badge) => el("button", { class: name === on ? "on" : "", onclick: fn },
       name, badge ? el("span", { class: "badge" }, String(badge)) : null);
-    tabsBox.replaceChildren(
+    // .filter BEFORE replaceChildren, not after. replaceChildren is a DOM
+    // call, not el(): a null argument becomes a TEXT NODE reading "null", and
+    // filtering the children afterwards keeps it, because a text node is
+    // truthy. Both ternaries below are truthy for staff, so the only people
+    // who ever saw "My orders null Groups null" were non-staff users with no
+    // approved group yet - every researcher, on their first sign-in.
+    tabsBox.replaceChildren(...[
       tab("My orders", () => renderHome()),
       canOrder ? tab("New order", () => renderOrderForm()) : null,
       tab("Groups", () => renderGroups(), invited),
-      me.staff ? tab("Admin", () => renderBench()) : null);
-    tabsBox.replaceChildren(...[...tabsBox.childNodes].filter(Boolean));
+      me.staff ? tab("Admin", () => renderBench()) : null,
+    ].filter(Boolean));
     tabsBox.hidden = false;
   }
 
