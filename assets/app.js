@@ -231,7 +231,7 @@
       tab("My orders", () => renderHome()),
       canOrder ? tab("New order", () => renderOrderForm()) : null,
       tab("Groups", () => renderGroups(), invited),
-      me.staff ? tab("Staff", () => renderBench()) : null);
+      me.staff ? tab("Admin", () => renderBench()) : null);
     tabsBox.replaceChildren(...[...tabsBox.childNodes].filter(Boolean));
     tabsBox.hidden = false;
   }
@@ -643,7 +643,7 @@
   }
 
   async function renderPlates(message, data) {
-    setTab("Staff");
+    setTab("Admin");
     let view = data;
     if (!view) {
       const reply = await call("bench_plates", {}, "");
@@ -673,34 +673,43 @@
   }
 
   async function renderStaffOrders(message, filters) {
-    setTab("Staff");
-    const f = filters || { status: "", group_id: "", q: "" };
-    const reply = await call("staff_orders", f, "");
+    setTab("Admin");
+    const f = filters || { status: [], group_id: "", q: "" };
+    const chosen = Array.isArray(f.status) ? f.status : (f.status ? [f.status] : []);
+    const reply = await call("staff_orders", Object.assign({}, f, { status: chosen }), "");
     if (!reply) return;
     if (!reply.ok) return renderHome(reply.error);
     const view = reply.data;
-    const status = el("select", {}, el("option", { value: "" }, ""),
-      ["new", "started", "in process", "completed", "cancelled"].map(x => el("option", { value: x, selected: f.status === x }, x)));
+    // Several statuses at once (the bench, 2026-09-23).
+    const status = el("select", { multiple: true, size: "5" },
+      ["new", "started", "in process", "completed", "cancelled"].map(x =>
+        el("option", { value: x, selected: chosen.includes(x) }, x)));
     const group = el("select", {}, el("option", { value: "" }, ""),
       view.groups.map(g => el("option", { value: g.group_id, selected: f.group_id === g.group_id }, g.name)));
-    const q = el("input", { value: f.q, placeholder: "Order, name or email" });
+    const q = el("input", { value: f.q, placeholder: "Order, name or email", list: "people", autocomplete: "off" });
+    const people = el("datalist", { id: "people" }, (view.people || []).map(p => el("option", { value: p })));
     show(staffTabs("Orders"),
       message ? errorLine(message) : null,
       el("form", {
         class: "card row", onsubmit: e => {
           e.preventDefault();
-          renderStaffOrders(null, { status: status.value, group_id: group.value, q: q.value.trim() });
+          renderStaffOrders(null, {
+            status: [...status.selectedOptions].map(o => o.value),
+            group_id: group.value, q: q.value.trim(),
+          });
         },
-      }, el("label", {}, "Status", status), el("label", {}, "Group", group), el("label", { class: "grow" }, "Find", q),
+      }, el("label", {}, "Status", status), el("label", {}, "Group", group),
+        el("label", { class: "grow" }, "Find", q, people),
         el("button", { class: "primary", type: "submit" }, "Show")),
       el("div", { class: "card" },
         view.orders.length ? el("div", { class: "table-wrap" }, el("table", {},
-          el("thead", {}, el("tr", {}, ["Order", "Placed", "Status", "Group", "By", "Lines"].map(h => el("th", {}, h)))),
+          el("thead", {}, el("tr", {}, ["Order", "Placed", "Status", "Group", "By", "New lines", "Comment"].map(h => el("th", {}, h)))),
           el("tbody", {}, view.orders.map(o => el("tr", {},
             el("td", {}, el("button", { class: "link", onclick: () => renderStaffOrder(o.order_id, null, f) }, "#" + o.order_id)),
             el("td", {}, (o.created_at || "").replace("T", " ").slice(0, 16)),
             el("td", {}, el("span", { class: "status " + o.status.replace(" ", "-") }, o.status)),
-            el("td", {}, o.group_name || ""), el("td", {}, o.by || ""), el("td", {}, String(o.lines))))))) : el("p", { class: "muted" }, "—"),
+            el("td", {}, o.group_name || ""), el("td", {}, o.by || ""), el("td", {}, String(o.lines)),
+            el("td", { class: "comment" }, o.remarks || "")))))) : el("p", { class: "muted" }, "—"),
         view.more ? el("p", { class: "muted small" }, "Newest " + view.orders.length + " shown.") : null));
   }
 
@@ -717,7 +726,7 @@
   }
 
   async function renderStaffOrder(orderId, message, filters, data) {
-    setTab("Staff");
+    setTab("Admin");
     let order = data;
     if (!order) {
       const reply = await call("staff_order", { order_id: orderId }, "");
@@ -768,7 +777,7 @@
   }
 
   async function renderStaffGroups(message, data) {
-    setTab("Staff");
+    setTab("Admin");
     let view = data;
     if (!view) {
       const reply = await call("staff_groups", {}, "");
@@ -804,7 +813,7 @@
   // orders that arrived and prints theirs (Nitsan, 2026-09-17).
 
   async function renderBench(message, data) {
-    setTab("Staff");
+    setTab("Admin");
     let orders = data;
     if (!orders) {
       const reply = await call("bench_orders", {}, "");
