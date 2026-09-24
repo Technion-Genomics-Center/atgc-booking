@@ -548,11 +548,18 @@
   // The labels an order needs: its own new templates and primers, each once.
   // A template or primer from an earlier order is already at the centre, like
   // a core primer, so it gets none (Nitsan, 2026-09-17). Nothing to tick.
-  function renderLabels(order, message) {
+  async function renderLabels(order, message) {
     setTab("My orders");
     const tubes = labelsOf(order);
     const go = el("button", { class: "primary" }, tubes.length ? "Print " + tubes.length : "No labels needed");
     if (!tubes.length && order.status !== "new") go.disabled = true;
+    // Labels are printed at the centre's own printer, on the one computer that
+    // has it (the bench, 2026-09-23). Elsewhere the button waits.
+    const here = tubes.length ? await Dymo.printer().catch(() => null) : "no labels";
+    if (!here) {
+      go.disabled = true;
+      go.textContent = "Print at the ATGC label station";
+    }
     go.addEventListener("click", async () => {
       if (tubes.length) await printStickers(order, tubes);
       const reply = await call("labels_printed", { order_id: order.order_id, tube_ids: tubes.map(t => t.tube_id) }, "");
@@ -569,7 +576,17 @@
           el("td", {}, el("strong", {}, t.label || "")), el("td", {}, t.name || ""))))))
           : null,
         el("div", { class: "row", style: "margin-top:10px" }, go,
-          el("button", { class: "link", onclick: () => renderHome() }, "Back"))));
+          el("button", { class: "link", onclick: () => renderHome() }, "Back"),
+          // The bench may still need a sheet of labels from another machine.
+          !here && state.me.staff ? el("button", {
+            class: "link",
+            onclick: async () => {
+              printSheet(tubes.map(t => [order, t]));
+              const reply = await call("labels_printed",
+                { order_id: order.order_id, tube_ids: tubes.map(t => t.tube_id) }, "");
+              if (reply && reply.ok) { setOrders(reply.data); renderHome(); }
+            },
+          }, "Print here instead") : null)));
   }
 
   // An order's own new tubes, each once - what its labels are.
@@ -1038,6 +1055,58 @@
     else addRow();
     const remarks = el("textarea", { rows: "3", maxlength: "1000" });
 
+    // An order being typed is kept in this browser as it is written (the
+    // bench, 2026-09-23), so a closed tab or a stray click costs nothing. It
+    // never leaves the computer, and it is dropped once the order is placed.
+    const draft = {
+      key: "atgc-order-draft",
+      read: () => { try { return JSON.parse(localStorage.getItem(draft.key) || "null"); } catch (e) { return null; } },
+      save: () => {
+        try {
+          localStorage.setItem(draft.key, JSON.stringify({
+            service: service.value, group_id: group.value, budget: budget.value,
+            remarks: remarks.value, rows: [...body.children].map(tr => tr.toCsv()),
+          }));
+        } catch (e) { /* a browser that refuses to remember is no reason to stop */ }
+      },
+      clear: () => { try { localStorage.removeItem(draft.key); } catch (e) { /* as above */ } },
+    };
+
+    // What was being typed before, if this is a fresh form.
+    const saved = from ? null : draft.read();
+    if (saved && (saved.rows || []).length) {
+      if (state.me.services.some(s => s.id === saved.service)) service.value = saved.service;
+      if (groups.some(g => g.group_id === saved.group_id)) group.value = saved.group_id;
+      fillBudgets();
+      if ([...budget.options].some(o => o.value === saved.budget)) budget.value = saved.budget;
+      setSizeHead();
+      remarks.value = saved.remarks || "";
+      body.replaceChildren();
+      saved.rows.forEach(record => {
+        const row = lineRow(null, service);
+        body.append(row);
+        row.fromCsv(record);
+      });
+    }
+
+    // The table out to Excel and back (the bench, 2026-09-23).
+    const exportCsv = () => downloadCsv("atgc_order.csv",
+      csvText([...body.children].map(tr => tr.toCsv()), sizeLabel(service.value)));
+    const file = el("input", { type: "file", accept: ".csv,text/csv", hidden: true });
+    file.addEventListener("change", async () => {
+      const chosen = file.files[0];
+      if (!chosen) return;
+      const records = csvRecords(parseCsv(await chosen.text()));
+      file.value = "";
+      if (!records.length) return renderOrderForm("That file has no rows.", from);
+      body.replaceChildren();
+      records.forEach(record => {
+        const row = lineRow(null, service);
+        body.append(row);
+        row.fromCsv(record);
+      });
+    });
+
     show(el("form", {
       class: "card", onsubmit: async e => {
         e.preventDefault();
@@ -1049,9 +1118,12 @@
           err.replaceChildren(document.createTextNode(reply.error));
           return;
         }
+        draft.clear();
         setOrders(reply.data);
         renderHome();
       },
+      oninput: () => draft.save(),
+      onchange: () => draft.save(),
     }, el("h2", {}, "New Sanger order"),
       el("div", { class: "row" }, el("label", {}, "Service", service),
         el("label", {}, "Group", group), el("label", {}, "Budget", budget),
@@ -1063,12 +1135,82 @@
         el("thead", {}, el("tr", {}, FORM_HEADS.map(h => h === SIZE ? sizeHead : el("th", {}, h)))),
         body)),
       el("div", { class: "row", style: "margin-top:8px" },
-        el("button", { type: "button", onclick: () => addRow() }, "Add a row")),
+        el("button", { type: "button", onclick: () => addRow() }, "Add a row"),
+        el("span", { class: "grow" }),
+        el("button", { type: "button", class: "link", onclick: exportCsv }, "Save as CSV"),
+        el("button", { type: "button", class: "link", onclick: () => file.click() }, "Open a CSV"),
+        file),
       el("label", { style: "margin-top:12px" }, "Comments", remarks),
       el("div", { class: "row", style: "margin-top:10px" },
         el("button", { class: "primary", type: "submit" }, "Place order"),
-        el("button", { type: "button", class: "link", onclick: () => renderHome() }, "Back")),
+        el("button", { type: "button", class: "link", onclick: () => renderHome() }, "Back"),
+        saved ? el("button", {
+          type: "button", class: "link",
+          onclick: () => { draft.clear(); renderOrderForm(); },
+        }, "Start again") : null),
       el("p", { class: "error", id: "form-error", role: "alert" }, message || "")));
+  }
+
+  // ------------------------------------------------------------- the CSV
+  //
+  // The order table leaves and comes back as a spreadsheet (the bench,
+  // 2026-09-23). Only what the researcher fills in travels: no row id, no
+  // status, no label - those are the app's to give.
+  const CSV_HEADS = ["Template source", "Template name", "Size", "Conc ng/ul",
+    "Primer source", "Primer name"];
+
+  function csvText(records, sizeHeading) {
+    const quote = v => {
+      const text = v == null ? "" : String(v);
+      return /[",\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+    };
+    const heads = CSV_HEADS.map(h => h === "Size" ? sizeHeading : h);
+    // With a BOM, so Excel opens it as UTF-8 (CLAUDE.md).
+    return "﻿" + [heads, ...records].map(r => r.map(quote).join(",")).join("\r\n") + "\r\n";
+  }
+
+  function parseCsv(text) {
+    const rows = [];
+    let row = [], field = "", quoted = false;
+    const body = text.replace(/^﻿/, "");
+    for (let i = 0; i < body.length; i++) {
+      const c = body[i];
+      if (quoted) {
+        if (c === '"' && body[i + 1] === '"') { field += '"'; i++; }
+        else if (c === '"') quoted = false;
+        else field += c;
+      } else if (c === '"') quoted = true;
+      else if (c === ",") { row.push(field); field = ""; }
+      else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+      else if (c !== "\r") field += c;
+    }
+    if (field || row.length) { row.push(field); rows.push(row); }
+    return rows.filter(r => r.some(v => v.trim()));
+  }
+
+  // The file's columns, in the order this page writes them - a heading that is
+  // one of ours is matched by name, so a reordered spreadsheet still reads.
+  function csvRecords(rows) {
+    const head = rows[0].map(h => h.trim().toLowerCase());
+    const known = CSV_HEADS.map(h => h.toLowerCase());
+    const sizeAt = head.findIndex(h => h.includes("size") || h.includes("length"));
+    const at = CSV_HEADS.map((h, n) => {
+      if (h === "Size") return sizeAt;
+      const found = head.indexOf(known[n]);
+      return found < 0 ? n : found;
+    });
+    const looksLikeHeading = head.some(h => known.includes(h) || h.includes("size") || h.includes("length"));
+    return (looksLikeHeading ? rows.slice(1) : rows)
+      .map(r => at.map(n => (n >= 0 && r[n] != null ? r[n].trim() : "")));
+  }
+
+  function downloadCsv(name, text) {
+    const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
+    const a = el("a", { href: url, download: name });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   // One box for a tube: type a name for a new one, or find one of yours by name
@@ -1087,12 +1229,21 @@
     let picked = null;
     let active = -1;
     let mode = "any";
+    let trouble = "";                  // "", "unknown" or "ambiguous" (from a CSV)
     const sameAs = typed => own().find(t => t.name === typed) ||
       own().find(t => t.label.toLowerCase() === typed.toLowerCase()) || null;
 
+    // After a CSV is read in, a name that matches nothing of the researcher's
+    // goes red and one that matches several goes amber, to be settled by date
+    // before the order can be placed (the bench, 2026-09-23).
     const check = () => {
       const typed = input.value.trim();
-      input.setCustomValidity(mode === "old" && typed && !picked ? "Pick one of your templates from the list." : "");
+      const unresolved = mode === "old" && typed && !picked;
+      input.classList.toggle("unknown", unresolved && trouble === "unknown");
+      input.classList.toggle("ambiguous", unresolved && trouble === "ambiguous");
+      input.setCustomValidity(!unresolved ? ""
+        : trouble === "unknown" ? "You have not sent a " + kind + " by that name."
+          : "Several of yours have that name: pick one by its date.");
     };
     const set = tube => {
       picked = mode === "new" ? null : tube;
@@ -1146,10 +1297,25 @@
       setMode: m => {
         if (m === mode) return;
         mode = m;
+        trouble = "";
         input.value = "";
         set(null);
         input.setCustomValidity("");
         input.placeholder = m === "old" ? "name or label" : "";
+      },
+      // A name read from a CSV: settled here if it can be, flagged if not.
+      fromText: text => {
+        const typed = (text || "").trim();
+        input.value = typed;
+        trouble = "";
+        if (mode !== "old" || !typed) { set(null); input.value = typed; return; }
+        const found = own().filter(t => t.name.toLowerCase() === typed.toLowerCase()
+          || t.label.toLowerCase() === typed.toLowerCase());
+        if (found.length === 1) { set(found[0]); return; }
+        trouble = found.length ? "ambiguous" : "unknown";
+        set(null);
+        input.value = typed;
+        check();
       },
       read: extra => picked ? { tube_id: picked.tube_id }
         : Object.assign({ name: input.value, attrs: extra }, mode === "new" ? { new: true } : {}),
@@ -1232,6 +1398,27 @@
         el("button", {
           type: "button", title: "Copy this line", onclick: () => tr.after(lineRow(tr.readView(), service)),
         }, "+"))));
+    // The row as a spreadsheet sees it, and back again. Researchers fill their
+    // samples in in Excel and bring the file here (the bench, 2026-09-23).
+    tr.toCsv = () => [templateSource.value, template.input.value, size.value, conc.value,
+      primerSource.value, primerSource.value === "Core" ? coreName.value : primer.input.value];
+    tr.fromCsv = record => {
+      templateSource.value = record[0] === "Previous" ? "Previous" : "User";
+      setTemplateSource();
+      template.fromText(record[1]);
+      if (!template.read({}).tube_id) { size.value = record[2] || ""; conc.value = record[3] || ""; }
+      primerSource.value = ["User", "Previous", "Core"].includes(record[4]) ? record[4] : "User";
+      setSource();
+      if (primerSource.value === "Core") {
+        const name = (record[5] || "").trim();
+        const known = (state.me.core_primers || []).find(p => p.toLowerCase() === name.toLowerCase());
+        coreName.value = known || "";
+        coreName.classList.toggle("unknown", !!name && !known);
+        coreName.setCustomValidity(name && !known ? "That is not one of the core's primers." : "");
+      } else {
+        primer.fromText(record[5]);
+      }
+    };
     tr.readLine = chosen => ({
       service: chosen,
       template: template.read({ insert_length: size.value, concentration: conc.value }),

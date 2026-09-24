@@ -151,6 +151,10 @@ table.lines td, table.lines th { text-align: center; }
 table.lines td.comment { min-width: 150px; text-align: left; }
 /* Template and primer name, the two boxes that need room to type in. */
 table.form td:nth-child(2), table.form td:nth-child(7) { min-width: 170px; }
+/* Read in from a CSV: red for a name that is not the researcher's, amber for
+   one that matches several of theirs and needs settling by date. */
+input.unknown, select.unknown { border-color: #d64545; background: #fff6f6; }
+input.ambiguous { border-color: #d69a45; background: #fffaf0; }
 .remark { margin-top: 8px; }
 .remark p { margin: 0 0 4px; }
 table.form td:nth-child(3) { min-width: 130px; }
