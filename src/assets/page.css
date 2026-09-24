@@ -149,7 +149,10 @@ td input, td select { width: 100%; }
 td.narrow { min-width: 80px; }
 table.lines td, table.lines th { text-align: center; }
 table.lines td.comment { min-width: 150px; text-align: left; }
-table.form td:nth-child(5), table.form td:nth-child(10) { min-width: 170px; }
+/* Template and primer name, the two boxes that need room to type in. */
+table.form td:nth-child(2), table.form td:nth-child(7) { min-width: 170px; }
+.remark { margin-top: 8px; }
+.remark p { margin: 0 0 4px; }
 table.form td:nth-child(3) { min-width: 130px; }
 table.form td:nth-child(9) { min-width: 90px; }
 
