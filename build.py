@@ -109,6 +109,20 @@ def main():
     for n in notes:
         print("note: " + n)
     print("all build checks passed")
+    # A BUILD IS NOT A PUBLISH. The live page is served from gh-pages; this
+    # wrote dist/ and nothing else. Saying "all build checks passed" and
+    # stopping is how a fix gets announced as live while a researcher still
+    # sees the old page - so the build says what is left to do, with the
+    # command, rather than leaving it to be remembered.
+    #
+    # The path has no drive letter: the share is Y: in one building and Z: in
+    # the other (D23).
+    print()
+    print("  dist/ is built. THE LIVE PAGE IS STILL THE OLD ONE.")
+    print("  To publish it, from inside BookingPage:")
+    print('      python tools/publish.py "Rebuild: what changed"')
+    print("  The message is required. That command runs this build again, so")
+    print("  there is no need to build first.")
     return 0
 
 
