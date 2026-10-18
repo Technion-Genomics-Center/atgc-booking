@@ -85,6 +85,12 @@ h2:first-child { margin-top: 0; }
 }
 .card.accent { border-left: 4px solid var(--a); }
 .card.plain { background: var(--ground); border: 0; box-shadow: none; }
+/* What must not be missed on a form - QC samples do not come back. */
+.notice {
+  border-left: 4px solid var(--c); background: #fff3ec; border-radius: 8px;
+  padding: 12px 14px; margin: 4px 0 14px; color: var(--ink); line-height: 1.5;
+}
+.notice b { color: #a5370f; }
 .cta { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
 .cta b { display: block; font: 700 14px var(--display); text-transform: uppercase; letter-spacing: .09em; color: var(--navy); }
 
