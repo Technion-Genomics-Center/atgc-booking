@@ -1413,7 +1413,7 @@
   // Three ways in, each to a page of its own: Sanger sequencing, Sample QC,
   // and booking an instrument (Nitsan, 2026-10-18).
   function orderTiles() {
-    const instruments = (state.me.instruments || []).map(i => i.short).join(" · ");
+    const instruments = [...new Set((state.me.instruments || []).map(i => i.kind || i.short))].join(" · ");
     const tile = (title, what, fn) => el("button", { class: "tile", onclick: fn },
       el("b", {}, title), el("span", { class: "muted small" }, what));
     return el("div", { class: "tiles" },
@@ -1699,7 +1699,8 @@
       date: date.value, from: from.value, length: length.value }, changes), data);
 
     const instrument = el("select", {}, all.map(i =>
-      el("option", { value: i.id, selected: i.id === chosen.id }, i.name + " · " + i.where)));
+      el("option", { value: i.id, selected: i.id === chosen.id },
+        i.name.includes(i.where) ? i.name : i.name + " · " + i.where)));
     instrument.addEventListener("change", () => again({ instrument: instrument.value }));
     const { group, budget } = groupAndBudget(p);
 
