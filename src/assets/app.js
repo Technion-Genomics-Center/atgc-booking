@@ -246,11 +246,11 @@
     // Where an order is: placed, labels printed, at the bench, results sent.
     // A QC order has no labels: placed, measured, results sent.
     const qc = service === QC;
-    const order = qc ? ["new", "in process", "completed"] : ["new", "started", "in process", "completed"];
+    const order = qc ? ["new", "submitted", "completed"] : ["new", "started", "in process", "completed"];
     const at = order.indexOf(status);
     if (at < 0) return null;
     const names = qc
-      ? [["Placed", "bring the samples"], ["In process", "at the lab"], ["Completed", "results in your folder"]]
+      ? [["Placed", "bring the samples"], ["Submitted", "at the lab"], ["Completed", "results in your folder"]]
       : [["Placed", ""], ["Labels printed", "bring the tubes"], ["In process", "at the bench"],
         ["Completed", "results in your folder"]];
     const last = names.length - 1;
@@ -578,6 +578,7 @@
             el("td", {}, l.template.concentration == null ? "" : String(l.template.concentration)),
             el("td", {}, l.primer.source), el("td", {}, l.primer.name || ""), el("td", {}, l.primer.label || ""),
             el("td", { class: "comment" }, l.remarks || "")))))),
+        order.staff_remarks ? el("p", { class: "small" }, el("b", {}, "Lab: "), order.staff_remarks) : null,
         mine ? orderRemark(order) : (order.remarks
           ? el("p", { class: "muted small" }, order.remarks) : null)));
     }
@@ -752,7 +753,7 @@
     const view = reply.data;
     // Several statuses at once (the bench, 2026-09-23).
     const status = el("select", { multiple: true, size: "5" },
-      ["new", "started", "in process", "completed", "cancelled"].map(x =>
+      ["new", "started", "in process", "submitted", "completed", "cancelled"].map(x =>
         el("option", { value: x, selected: chosen.includes(x) }, x)));
     const group = el("select", {}, el("option", { value: "" }, ""),
       view.groups.map(g => el("option", { value: g.group_id, selected: f.group_id === g.group_id }, g.name)));
@@ -1393,6 +1394,8 @@
     }
     reshape();
 
+    // Ticked before the order can go - the server asks for it too (Nitsan, 2026-10-18).
+    const discarded = el("input", { type: "checkbox", required: true });
     const formsLink = state.me.submission_forms_url
       ? el("a", { href: state.me.submission_forms_url, target: "_blank", rel: "noopener" }, "submission form")
       : "submission form";
@@ -1408,6 +1411,7 @@
         const samples = [...body.children].map(tr => tr.read());
         const reply = await call("place_qc_order", {
           group_id: group.value, budget: budget.value, qc, samples, remarks: remarks.value,
+          discarded_ok: discarded.checked,
         }, "");
         if (!reply) return;
         if (!reply.ok) {
@@ -1423,9 +1427,9 @@
     }, el("h2", {}, "New Sample QC order"),
       // Said first and plainly: what is sent for QC does not come back
       // (Nitsan, 2026-10-18).
-      el("div", { class: "notice" },
-        el("b", {}, "Samples sent for QC are used up and discarded after measurement."),
-        " Samples going on to library preparation should come with that application's ", formsLink, " instead."),
+      el("label", { class: "notice" }, discarded,
+        el("span", {}, el("b", {}, "I understand that samples sent for QC are discarded after measurement."),
+          " Samples going on to library preparation should come with that application's ", formsLink, " instead.")),
       el("div", { class: "row" }, el("label", {}, "Service", service),
         el("label", {}, "Group", group), el("label", {}, "Budget", budget),
         el("label", {}, "Lab", lab),
