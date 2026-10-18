@@ -263,3 +263,25 @@ input.linked { border-color: var(--good); }
 }
 .dropzone:hover, .dropzone.over { border-color: var(--a); color: var(--navy); background: rgba(29, 165, 255, .06); }
 .status.submitted { background: rgba(253, 161, 60, .18); color: #8a5a08; }
+
+/* New order: three ways in (2026-10-18). */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.tile {
+  display: grid; gap: 4px; text-align: left; padding: 16px 18px; border-radius: var(--radius);
+  background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--a);
+  box-shadow: var(--shadow); cursor: pointer; color: var(--ink);
+}
+.tile:nth-child(2) { border-left-color: var(--g); }
+.tile:nth-child(3) { border-left-color: var(--t); }
+.tile b { font: 700 14px var(--display); text-transform: uppercase; letter-spacing: .08em; color: var(--navy); }
+.tile:hover { border-color: var(--a); }
+
+/* Book an instrument: a week of it. */
+.week-nav { align-items: center; margin: 12px 0 6px; }
+table.week { table-layout: fixed; width: 100%; min-width: 560px; }
+table.week th { text-align: center; }
+table.week td { vertical-align: top; height: 72px; cursor: pointer; border: 1px solid var(--soft-line); padding: 4px; }
+table.week .on { background: rgba(29, 165, 255, .07); }
+.slot { font: 12px var(--mono); border-radius: 4px; padding: 2px 4px; margin-bottom: 3px; }
+.slot.taken { background: #eef1f5; color: var(--muted); }
+.slot.mine { background: rgba(0, 129, 135, .14); color: var(--g); font-weight: 600; }

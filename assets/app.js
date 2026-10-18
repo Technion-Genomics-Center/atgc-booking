@@ -235,7 +235,7 @@
     // approved group yet - every researcher, on their first sign-in.
     tabsBox.replaceChildren(...[
       tab("My orders", () => renderHome()),
-      canOrder ? tab("New order", () => renderOrderForm()) : null,
+      canOrder ? tab("New order", () => renderNewOrder()) : null,
       tab("Groups", () => renderGroups(), invited),
       me.staff ? tab("Admin", () => renderBench()) : null,
     ].filter(Boolean));
@@ -365,10 +365,8 @@
       message ? errorLine(message) : null,
       el("div", { class: "grid" },
         el("div", {},
-          approved.length ? el("div", { class: "card accent cta" },
-            el("div", {}, el("b", {}, "Ready to send samples?"),
-              el("div", { class: "muted small" }, "Place the order, then bring the samples to the core.")),
-            el("button", { class: "primary", onclick: () => renderOrderForm() }, "New order")) : null,
+          approved.length ? orderTiles() : null,
+          bookingList(),
           el("h2", {}, "Orders"),
           renderOrderList()),
         el("aside", {},
@@ -1271,15 +1269,10 @@
 
     // One service to an order (the bench, 2026-09-23): chosen here, once, and
     // every line of the order runs it.
-    const service = serviceSelect((from || pick || {}).service);
+    const service = serviceSelect((from || pick || {}).service);   // Sanger's own
     const sizeHead = el("th", {});
     const setSizeHead = () => { sizeHead.textContent = sizeLabel(service.value); };
-    service.addEventListener("change", () => {
-      if (service.value === QC) {
-        return renderOrderForm(null, null, { service: QC, group_id: group.value, budget: budget.value });
-      }
-      setSizeHead();
-    });
+    service.addEventListener("change", setSizeHead);
     setSizeHead();
 
     const body = el("tbody");
@@ -1407,10 +1400,31 @@
 
   // Every service that can be ordered now - Sample QC only while the server
   // has its form's rules.
+  // The Sanger services. Sample QC and the instruments are ordered on their
+  // own pages, chosen from "New order" (Nitsan, 2026-10-18).
   function serviceSelect(chosen) {
     return el("select", { required: true }, state.me.services
-      .filter(s => s.id !== QC || state.me.qc)
+      .filter(s => s.id !== QC)
       .map(s => el("option", { value: s.id, selected: chosen === s.id }, s.name)));
+  }
+
+  // ------------------------------------------------------------- new order
+  //
+  // Three ways in, each to a page of its own: Sanger sequencing, Sample QC,
+  // and booking an instrument (Nitsan, 2026-10-18).
+  function orderTiles() {
+    const instruments = (state.me.instruments || []).map(i => i.short).join(" · ");
+    const tile = (title, what, fn) => el("button", { class: "tile", onclick: fn },
+      el("b", {}, title), el("span", { class: "muted small" }, what));
+    return el("div", { class: "tiles" },
+      tile("Sanger sequencing", "PCR · Plasmid · Ready2go", () => renderOrderForm()),
+      state.me.qc ? tile("Sample QC", "Qubit · TapeStation", () => renderQcForm()) : null,
+      instruments ? tile("Book an instrument", instruments, () => renderBooking()) : null);
+  }
+
+  function renderNewOrder() {
+    setTab("New order");
+    show(el("h2", {}, "New order"), orderTiles());
   }
 
   function renderQcForm(message, from, pick) {
@@ -1418,9 +1432,6 @@
     const rules = state.me.qc;
     const L = rules.labels;
     const { groups, group, budget, fillBudgets } = groupAndBudget(from || pick);
-    const service = serviceSelect(QC);
-    service.addEventListener("change", () => renderOrderForm(null, null,
-      { service: service.value, group_id: group.value, budget: budget.value }));
 
     const choice = (options, value) => el("select", {},
       options.map(o => el("option", { value: o, selected: o === value }, o)));
@@ -1606,7 +1617,7 @@
       el("label", { class: "notice" }, discarded,
         el("span", {}, el("b", {}, "I understand that samples sent for QC are discarded after measurement."),
           " Samples going on to library preparation should come with that application's ", formsLink, " instead.")),
-      el("div", { class: "row" }, el("label", {}, "Service", service),
+      el("div", { class: "row" },
         el("label", {}, "Group", group), el("label", {}, "Budget", budget),
         el("label", {}, "Lab", lab),
         el("span", { class: "grow" }),
@@ -1627,6 +1638,139 @@
           onclick: () => { draft.clear(); renderQcForm(); },
         }, "Start again") : null),
       el("p", { class: "error", id: "form-error", role: "alert" }, message || "")));
+  }
+
+  // ----------------------------------------------------------- instruments
+  //
+  // Book an instrument: a week of it, a time in it, and your own bookings.
+  // Somebody else's time shows only as taken. Times are the lab's local time.
+  const pad2 = n => String(n).padStart(2, "0");
+  const ymd = d => d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+  const dayOf = iso => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d); };
+  const addDays = (iso, n) => { const d = dayOf(iso); d.setDate(d.getDate() + n); return ymd(d); };
+  const weekStart = iso => addDays(iso, -dayOf(iso).getDay());       // the week starts on Sunday
+  const timeOf = stamp => (stamp || "").slice(11, 16);
+  const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  function whenText(b) {
+    return dateOf(b.from) + " " + timeOf(b.from) + "–" +
+      (b.until.slice(0, 10) === b.from.slice(0, 10) ? "" : dateOf(b.until) + " ") + timeOf(b.until);
+  }
+
+  // Your bookings still to come, on the home page.
+  function bookingList() {
+    const list = (state.orders && state.orders.bookings) || [];
+    if (!list.length) return null;
+    return el("div", {}, el("h2", {}, "Bookings"),
+      el("div", { class: "card" }, el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {},
+        list.map(b => el("tr", {},
+          el("td", {}, el("b", {}, b.instrument_name)), el("td", {}, whenText(b)),
+          el("td", { class: "muted small" }, b.hours + " h"),
+          el("td", {}, el("button", { class: "link", onclick: () => cancelBooking(b) }, "Cancel")))))))));
+  }
+
+  async function cancelBooking(b, pick) {
+    if (!confirm("Cancel " + b.instrument_name + ", " + whenText(b) + "?")) return;
+    const reply = await call("cancel_booking", {
+      booking_id: b.booking_id, instrument: b.instrument, start: weekStart(b.from.slice(0, 10)),
+    }, "");
+    if (!reply) return;
+    if (state.orders && reply.ok) state.orders.bookings = reply.data.mine;
+    if (pick) return renderBooking(reply.ok ? null : reply.error, pick, reply.ok ? reply.data : null);
+    renderHome(reply.ok ? null : reply.error);
+  }
+
+  async function renderBooking(message, pick, week) {
+    setTab("New order");
+    const all = state.me.instruments || [];
+    if (!all.length) return renderNewOrder();
+    const p = pick || {};
+    const chosen = all.find(i => i.id === p.instrument) || all[0];
+    const start = weekStart(p.start || ymd(new Date()));
+    if (!week || week.instrument !== chosen.id || week.start !== start) {
+      const reply = await call("instrument_week", { instrument: chosen.id, start }, "");
+      if (!reply) return;
+      if (!reply.ok) return renderHome(reply.error);
+      week = reply.data;
+    }
+    if (state.orders) state.orders.bookings = week.mine;
+    const again = (changes, msg, data) => renderBooking(msg || null, Object.assign({}, p, {
+      instrument: chosen.id, start, group_id: group.value, budget: budget.value,
+      date: date.value, from: from.value, length: length.value }, changes), data);
+
+    const instrument = el("select", {}, all.map(i =>
+      el("option", { value: i.id, selected: i.id === chosen.id }, i.name + " · " + i.where)));
+    instrument.addEventListener("change", () => again({ instrument: instrument.value }));
+    const { group, budget } = groupAndBudget(p);
+
+    // The form: a day, a start in quarter hours, and how long.
+    const date = el("input", { type: "date", required: true, value: p.date || ymd(new Date()) });
+    const quarter = [];
+    for (let m = 0; m < 24 * 60; m += 15) quarter.push(pad2(Math.floor(m / 60)) + ":" + pad2(m % 60));
+    const from = el("select", {}, quarter.map(t => el("option", { value: t, selected: t === (p.from || "09:00") }, t)));
+    const lengths = [];
+    for (let m = 15; m <= 12 * 60; m += 15) lengths.push(m);
+    const length = el("select", {}, lengths.map(m => el("option", {
+      value: String(m), selected: String(m) === String(p.length || 60),
+    }, Math.floor(m / 60) + ":" + pad2(m % 60))));
+    const samples = chosen.booked === "samples" ? el("input", { inputmode: "numeric", required: true }) : null;
+
+    // The week: each day's bookings, yours marked. A day clicked is the day booked.
+    const days = [...Array(7).keys()].map(n => addDays(start, n));
+    const onDay = day => week.bookings.filter(b => b.from.slice(0, 10) <= day && b.until.slice(0, 10) >= day
+      && !(b.until.slice(0, 10) === day && timeOf(b.until) === "00:00"));
+    const grid = el("table", { class: "week" },
+      el("thead", {}, el("tr", {}, days.map(d => el("th", { class: d === date.value ? "on" : "" },
+        DAY_NAMES[dayOf(d).getDay()] + " " + dateOf(d).slice(0, 5))))),
+      el("tbody", {}, el("tr", {}, days.map(d => el("td", {
+        class: d === date.value ? "on" : "",
+        onclick: () => again({ date: d }),
+      }, onDay(d).map(b => el("div", { class: "slot " + (b.mine ? "mine" : "taken") },
+        (b.from.slice(0, 10) < d ? "00:00" : timeOf(b.from)) + "–" +
+        (b.until.slice(0, 10) > d ? "24:00" : timeOf(b.until)),
+        b.mine ? el("span", {}, " yours") : null)))))));
+
+    const book = async e => {
+      e.preventDefault();
+      const [h, m] = from.value.split(":").map(Number);
+      const begin = dayOf(date.value);
+      begin.setHours(h, m, 0, 0);
+      const end = new Date(begin.getTime() + Number(length.value) * 60000);
+      const stamp = d => ymd(d) + "T" + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":00";
+      const reply = await call("book_instrument", {
+        instrument: chosen.id, group_id: group.value, budget: budget.value,
+        from: stamp(begin), until: stamp(end), samples: samples ? samples.value : null,
+        start: weekStart(date.value),
+      }, "");
+      if (!reply) return;
+      if (!reply.ok) return again({}, reply.error, week);
+      again({ start: reply.data.start }, null, reply.data);
+    };
+
+    const mine = week.mine || [];
+    show(el("form", { class: "card", onsubmit: book },
+      el("h2", {}, "Book an instrument"),
+      el("div", { class: "row" }, el("label", {}, "Instrument", instrument),
+        el("label", {}, "Group", group), el("label", {}, "Budget", budget)),
+      chosen.trained ? null : el("p", { class: "notice plain" }, chosen.notice),
+      el("div", { class: "row week-nav" },
+        el("button", { type: "button", onclick: () => again({ start: addDays(start, -7) }) }, "‹"),
+        el("b", {}, dateOf(days[0]) + " – " + dateOf(days[6])),
+        el("button", { type: "button", onclick: () => again({ start: addDays(start, 7) }) }, "›")),
+      el("div", { class: "table-wrap" }, grid),
+      el("div", { class: "row", style: "margin-top:12px" },
+        el("label", {}, "Day", date), el("label", {}, "From", from), el("label", {}, "Hours", length),
+        samples ? el("label", {}, "Samples", samples) : null,
+        el("button", { class: "primary", type: "submit", disabled: !chosen.trained }, "Book")),
+      chosen.cancel_minutes ? el("p", { class: "muted small" },
+        "Can be cancelled until " + chosen.cancel_minutes + " minutes before.") : null,
+      el("p", { class: "error", role: "alert" }, message || "")),
+      mine.length ? el("h2", {}, "Your bookings") : null,
+      mine.length ? el("div", { class: "card" }, el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {},
+        mine.map(b => el("tr", {},
+          el("td", {}, el("b", {}, b.instrument_name)), el("td", {}, whenText(b)),
+          el("td", { class: "muted small" }, b.hours + " h"),
+          el("td", {}, el("button", { class: "link", onclick: () => cancelBooking(b, Object.assign({}, p, { instrument: chosen.id, start })) }, "Cancel")))))))) : null);
   }
 
   // ------------------------------------------------------------- the CSV
