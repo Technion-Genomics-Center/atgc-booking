@@ -692,7 +692,9 @@
     const tab = (name, fn) => el("button", { class: name === on ? "tab on" : "tab", onclick: fn }, name);
     return el("div", { class: "row tabs" },
       tab("Labels", () => renderBench()), tab("Sanger Prep", () => renderPlates()),
-      tab("Orders", () => renderStaffOrders()), tab("Groups", () => renderStaffGroups()),
+      tab("Sanger Orders", () => renderStaffOrders()),
+      state.me.qc ? tab("Sample QC", () => renderStaffQc()) : null,
+      tab("Groups", () => renderStaffGroups()),
       el("span", { class: "grow" }),
       el("button", { class: "link", onclick: () => renderHome() }, "Back"));
   }
@@ -747,7 +749,7 @@
     setTab("Admin");
     const f = filters || { status: [], group_id: "", q: "" };
     const chosen = Array.isArray(f.status) ? f.status : (f.status ? [f.status] : []);
-    const reply = await call("staff_orders", Object.assign({}, f, { status: chosen }), "");
+    const reply = await call("staff_orders", Object.assign({}, f, { status: chosen, kind: "sanger" }), "");
     if (!reply) return;
     if (!reply.ok) return renderHome(reply.error);
     const view = reply.data;
@@ -759,7 +761,7 @@
       view.groups.map(g => el("option", { value: g.group_id, selected: f.group_id === g.group_id }, g.name)));
     const q = el("input", { value: f.q, placeholder: "Order, name or email", list: "people", autocomplete: "off" });
     const people = el("datalist", { id: "people" }, (view.people || []).map(p => el("option", { value: p })));
-    show(staffTabs("Orders"),
+    show(staffTabs("Sanger Orders"),
       message ? errorLine(message) : null,
       el("form", {
         class: "card row", onsubmit: e => {
@@ -818,7 +820,7 @@
       : null;
     const qcTable = order.service === QC ? sampleTable(order, l => [
       el("td", { class: "comment" }, staffRemark(l, act)), el("td", {}, skip(l))], ["Comment", ""]) : null;
-    show(staffTabs("Orders"),
+    show(staffTabs("Sanger Orders"),
       message ? errorLine(message) : null,
       el("div", { class: "card" },
         el("div", { class: "row" },
@@ -853,6 +855,180 @@
                   l.status === "Skip" ? "Unskip" : "Skip")
                 : null))))))),
         order.remarks ? el("p", { class: "muted small" }, order.remarks) : null));
+  }
+
+  // ------------------------------------------------------------ Sample QC
+  //
+  // The bench's Sample QC on the page, as in the admin app (Nitsan,
+  // 2026-10-18): one lab's orders at a time, remembered in this browser;
+  // new, submitted, completed; the lab's remarks on the order and on each
+  // sample; result files sent up in pieces through the letterbox, and on to the
+  // researcher's folder when the order is completed.
+  const QC_LAB_KEY = "atgc-qc-lab";
+
+  function qcLab() {
+    const labs = (state.me.qc || {}).labs || [];
+    let lab = "";
+    try { lab = localStorage.getItem(QC_LAB_KEY) || ""; } catch (e) { /* not remembered */ }
+    return labs.includes(lab) ? lab : (labs[0] || "");
+  }
+
+  async function renderStaffQc(message, filters) {
+    setTab("Admin");
+    const f = filters || { status: [], q: "" };
+    const lab = qcLab();
+    const reply = await call("staff_orders", { kind: "qc", lab, status: f.status, q: f.q }, "");
+    if (!reply) return;
+    if (!reply.ok) return renderHome(reply.error);
+    const view = reply.data;
+    const labs = (state.me.qc || {}).labs || [];
+    const status = el("select", { multiple: true, size: "4" },
+      ["new", "submitted", "completed", "cancelled"].map(x =>
+        el("option", { value: x, selected: f.status.includes(x) }, x)));
+    const q = el("input", { value: f.q, placeholder: "Order, name or email", list: "people", autocomplete: "off" });
+    const people = el("datalist", { id: "people" }, (view.people || []).map(p => el("option", { value: p })));
+    const measure = o => [o.qc && o.qc.qubit ? "Qubit" : null, o.qc && o.qc.tapestation ? "TapeStation" : null]
+      .filter(Boolean).join(" + ");
+    show(staffTabs("Sample QC"),
+      message ? errorLine(message) : null,
+      el("div", { class: "row tabs" }, labs.map(x => el("button", {
+        class: x === lab ? "tab on" : "tab",
+        onclick: () => {
+          try { localStorage.setItem(QC_LAB_KEY, x); } catch (e) { /* not remembered */ }
+          renderStaffQc(null, f);
+        },
+      }, x))),
+      el("form", {
+        class: "card row", onsubmit: e => {
+          e.preventDefault();
+          renderStaffQc(null, { status: [...status.selectedOptions].map(o => o.value), q: q.value.trim() });
+        },
+      }, el("label", {}, "Status", status), el("label", { class: "grow" }, "Find", q, people),
+        el("button", { class: "primary", type: "submit" }, "Show")),
+      el("div", { class: "card" },
+        view.orders.length ? el("div", { class: "table-wrap" }, el("table", {},
+          el("thead", {}, el("tr", {}, ["Order", "Placed", "Status", "Group", "By", "Measure", "Samples", "Comment"]
+            .map(h => el("th", {}, h)))),
+          el("tbody", {}, view.orders.map(o => el("tr", {},
+            el("td", {}, el("button", { class: "link", onclick: () => renderStaffQcOrder(o.order_id, null, f) }, "#" + o.order_id)),
+            el("td", {}, (o.created_at || "").replace("T", " ").slice(0, 16)),
+            el("td", {}, el("span", { class: "status " + o.status.replace(" ", "-") }, o.status)),
+            el("td", {}, o.group_name || ""), el("td", {}, o.by || ""), el("td", {}, measure(o)),
+            el("td", {}, String(o.samples || 0)), el("td", { class: "comment" }, o.remarks || "")))))) : el("p", { class: "muted" }, "—"),
+        view.more ? el("p", { class: "muted small" }, "Newest " + view.orders.length + " shown.") : null));
+  }
+
+  // One result file, up in pieces; false if it did not arrive whole.
+  async function uploadQcFile(orderId, file, progress) {
+    const piece = state.me.qc_piece || 150000;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    for (let at = 0; ; at += piece) {
+      const part = bytes.subarray(at, at + piece);
+      let binary = "";
+      for (let i = 0; i < part.length; i += 8192) binary += String.fromCharCode(...part.subarray(i, i + 8192));
+      const last = at + piece >= bytes.length;
+      progress.textContent = file.name + " · " + Math.round(100 * at / Math.max(bytes.length, 1)) + "%";
+      const reply = await call("staff_qc_upload", {
+        order_id: orderId, name: file.name, offset: at, last, data: btoa(binary),
+      }, "");
+      if (!reply || !reply.ok) {
+        progress.textContent = reply ? reply.error : "";
+        return false;
+      }
+      if (last) return true;
+    }
+  }
+
+  async function renderStaffQcOrder(orderId, message, filters, data) {
+    setTab("Admin");
+    let view = data;
+    if (!view) {
+      const reply = await call("staff_qc_order", { order_id: orderId }, "");
+      if (!reply) return;
+      if (!reply.ok) return renderStaffQc(reply.error, filters);
+      view = reply.data;
+    }
+    const order = view.order;
+    const act = async (op, args) => {
+      const reply = await call(op, Object.assign({ order_id: orderId }, args), "");
+      if (!reply) return;
+      if (!reply.ok) return renderStaffQcOrder(orderId, reply.error, filters, view);
+      renderStaffQcOrder(orderId, null, filters, reply.data);
+    };
+    const cancelled = order.status === "cancelled";
+    const status = el("select", { disabled: cancelled },
+      (cancelled ? ["cancelled"] : view.statuses).map(x => el("option", { value: x, selected: x === order.status }, x)));
+    const general = el("input", { maxlength: "1000", value: order.staff_remarks || "", disabled: cancelled });
+    const boxes = {};
+    const remarkBox = l => {
+      boxes[l.line_id] = el("input", { class: "comment-input", maxlength: "200", value: l.remarks || "", disabled: cancelled });
+      return [el("td", { class: "comment" }, boxes[l.line_id])];
+    };
+
+    // Files dropped here, or chosen, go up one after another.
+    const progress = el("span", { class: "muted small" });
+    const picker = el("input", { type: "file", multiple: true, hidden: true });
+    const send = async list => {
+      for (const file of list) {
+        if (!await uploadQcFile(orderId, file, progress)) return;
+      }
+      renderStaffQcOrder(orderId, null, filters);
+    };
+    picker.addEventListener("change", () => send([...picker.files]));
+    const drop = el("div", { class: "dropzone", onclick: () => picker.click() }, "Results — drop files here, or click", picker);
+    drop.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("over"); });
+    drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+    drop.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("over"); send([...e.dataTransfer.files]); });
+
+    const fileRows = [
+      ...view.order.waiting.map(name => el("tr", {}, el("td", {}, name),
+        el("td", { class: "muted small" }, order.status === "completed" ? "sending" : "sent when completed"),
+        el("td", {}, el("button", { class: "link", onclick: () => act("staff_qc_unstage", { name }) }, "Remove")))),
+      ...view.order.sent.map(name => el("tr", {}, el("td", {}, name), el("td", { class: "muted small" }, "sent"), el("td", {}))),
+    ];
+
+    show(staffTabs("Sample QC"),
+      message ? errorLine(message) : null,
+      el("div", { class: "card" },
+        el("div", { class: "row" },
+          el("strong", {}, "#" + order.order_id),
+          el("span", { class: "status " + order.status.replace(" ", "-") }, order.status),
+          el("span", { class: "muted small" }, order.group_name + " · " + (order.by || "") + " · " + (order.by_email || "")),
+          el("span", { class: "muted small" }, "Budget " + (order.budget || "")),
+          el("span", { class: "grow" }),
+          el("button", {
+            onclick: async () => {
+              const reply = await call("staff_qc_form", { order_id: orderId }, "");
+              if (reply && reply.ok) download(reply.data.name, reply.data.data);
+              else if (reply) renderStaffQcOrder(orderId, reply.error, filters, view);
+            },
+          }, "Download form"),
+          !cancelled && order.status !== "completed" ? el("button", {
+            onclick: async () => {
+              if (!confirm("Cancel order #" + order.order_id + "?")) return;
+              const reply = await call("staff_cancel", { order_id: orderId }, "");
+              if (reply && !reply.ok) return renderStaffQcOrder(orderId, reply.error, filters, view);
+              renderStaffQcOrder(orderId, null, filters);
+            },
+          }, "Cancel order") : null,
+          el("button", { class: "link", onclick: () => renderStaffQc(null, filters) }, "All QC orders")),
+        qcSummary(order),
+        order.remarks ? el("p", { class: "muted small" }, "“" + order.remarks + "”") : null),
+      cancelled ? null : el("div", { class: "card" }, drop, progress,
+        fileRows.length ? el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {}, fileRows))) : null),
+      el("div", { class: "card" },
+        el("div", { class: "row" }, el("label", {}, "Status", status),
+          el("label", { class: "grow" }, "Lab's remark", general)),
+        el("div", { style: "margin-top:10px" }, sampleTable(order, remarkBox, ["Lab's remark"])),
+        cancelled ? null : el("div", { class: "row", style: "margin-top:10px" },
+          el("button", {
+            class: "primary",
+            onclick: () => {
+              const remarks = {};
+              Object.keys(boxes).forEach(id => { remarks[id] = boxes[id].value; });
+              act("staff_qc_save", { status: status.value, staff_remarks: general.value, remarks });
+            },
+          }, "Save"))));
   }
 
   async function renderStaffGroups(message, data) {
