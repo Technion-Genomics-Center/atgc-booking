@@ -87,9 +87,12 @@ h2:first-child { margin-top: 0; }
 .card.plain { background: var(--ground); border: 0; box-shadow: none; }
 /* What must not be missed on a form - QC samples do not come back. */
 .notice {
+  display: flex; gap: 12px; align-items: flex-start; cursor: pointer;
   border-left: 4px solid var(--c); background: #fff3ec; border-radius: 8px;
   padding: 12px 14px; margin: 4px 0 14px; color: var(--ink); line-height: 1.5;
+  font: 400 14.5px var(--sans); text-transform: none; letter-spacing: 0;
 }
+.notice input { width: 18px; height: 18px; margin: 3px 0 0; flex: none; }
 .notice b { color: #a5370f; }
 .cta { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
 .cta b { display: block; font: 700 14px var(--display); text-transform: uppercase; letter-spacing: .09em; color: var(--navy); }
