@@ -255,3 +255,11 @@ input.linked { border-color: var(--good); }
   .who { align-items: flex-start; flex-direction: row; gap: 12px; width: 100%; }
   nav.maintabs { gap: 18px; overflow-x: auto; }
 }
+
+/* The bench's results drop on a Sample QC order (2026-10-18). */
+.dropzone {
+  border: 2px dashed var(--line); border-radius: 10px; padding: 18px; text-align: center;
+  color: var(--muted); cursor: pointer; margin-bottom: 8px;
+}
+.dropzone:hover, .dropzone.over { border-color: var(--a); color: var(--navy); background: rgba(29, 165, 255, .06); }
+.status.submitted { background: rgba(253, 161, 60, .18); color: #8a5a08; }
