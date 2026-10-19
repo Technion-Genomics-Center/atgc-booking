@@ -234,7 +234,7 @@
     // who ever saw "My orders null Groups null" were non-staff users with no
     // approved group yet - every researcher, on their first sign-in.
     tabsBox.replaceChildren(...[
-      tab("My orders", () => renderHome()),
+      tab("My orders", () => { renderHome(); refreshOrders(); }),
       canOrder ? tab("New order", () => renderNewOrder()) : null,
       tab("Groups", () => renderGroups(), invited),
       me.staff ? tab("Admin", () => renderBench()) : null,
@@ -435,13 +435,25 @@
     cache.set("orders", data);
   }
 
+  // The orders as the server has them now. The bench moves orders on while the
+  // page stays open, so "My orders" and coming back to the tab ask again
+  // (2026-10-19: an order completed by the bench still read "new").
+  let ordersAsked = 0;
   async function refreshOrders() {
+    ordersAsked = Date.now();
     const reply = await call("orders", {}, "");
     if (reply && reply.ok) {
       setOrders(reply.data);
       if (document.getElementById("orders")) renderHome();
     }
   }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && state.session && state.me
+        && document.getElementById("orders") && Date.now() - ordersAsked > 30000) {
+      refreshOrders();
+    }
+  });
 
   // The order table follows Bookitlab's request-lines table, column for column.
   // The Service column stays although the order now has one service: the bench
