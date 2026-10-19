@@ -472,17 +472,22 @@
   // The sample table's columns, by the form's rules: no concentration when the
   // Qubit is all that is ordered (it measures every sample), and a column for
   // the instrument only when both are.
-  function qcColumns(qc) {
+  // A concentration is asked only of a sample on the TapeStation alone: the
+  // Qubit measures every other one (Nitsan, 2026-10-19). With both ordered, the
+  // columns are there only when some sample is TapeStation-only.
+  function qcColumns(qc, instruments) {
     const q = qc || {};
+    const both = !!(q.qubit && q.tapestation);
+    const measured = both ? (instruments || []).includes("TapeStation") : !q.qubit;
     return QC_FIELDS.filter(([key]) =>
-      key === "instrument" ? !!(q.qubit && q.tapestation)
-        : key === "ngul" || key === "quantified_by" ? !(q.qubit && !q.tapestation)
+      key === "instrument" ? both
+        : key === "ngul" || key === "quantified_by" ? measured
           : true);
   }
 
   // A placed QC order's samples; `extra(line)` adds the cells after them.
   function sampleTable(order, extra, extraHeads) {
-    const cols = qcColumns(order.qc);
+    const cols = qcColumns(order.qc, order.lines.map(l => (l.sample || {}).instrument));
     return el("div", { class: "table-wrap" }, el("table", { class: "lines" },
       el("thead", {}, el("tr", {}, ["ID", "Status", ...cols.map(c => c[1]), ...extraHeads].map(h => el("th", {}, h)))),
       el("tbody", {}, order.lines.map(l => el("tr", {},
@@ -1486,13 +1491,23 @@
         QC_FIELDS.forEach(([key]) => { out[key] = inputs[key].value.trim(); });
         return out;
       };
-      tr.reshape = keys => QC_FIELDS.forEach(([key]) => { cells[key].hidden = !keys.includes(key); });
+      tr.instrument = () => inputs.instrument.value;
+      tr.reshape = (keys, on) => {
+        QC_FIELDS.forEach(([key]) => { cells[key].hidden = !keys.includes(key); });
+        // A sample the Qubit measures is not asked its concentration.
+        const ours = on.qubit && on.tapestation && inputs.instrument.value !== "TapeStation";
+        [inputs.ngul, inputs.quantified_by].forEach(box => {
+          box.disabled = ours;
+          box.title = ours ? "Measured by the lab" : "";
+        });
+      };
+      inputs.instrument.addEventListener("change", () => reshape());
       // Several lines pasted from Excel fill several rows, column for column.
       inputs.name.addEventListener("paste", e => {
         const text = (e.clipboardData || window.clipboardData).getData("text");
         if (!/[\r\n]/.test(text.trim())) return;
         e.preventDefault();
-        const keys = qcColumns(ordered()).map(c => c[0]);
+        const keys = qcColumns(ordered(), [...body.children].map(r => r.instrument())).map(c => c[0]);
         let at = tr;
         text.replace(/\r/g, "").split("\n").filter(r => r.trim()).forEach((r, i) => {
           // A pasted line is the whole row: a column it leaves out is emptied.
@@ -1526,9 +1541,9 @@
       qubitKit.required = on.qubit;
       tsType.required = tsKit.required = on.tapestation;
       tsOther.required = !tsOtherBox.hidden;
-      const keys = qcColumns(on).map(c => c[0]);
+      const keys = qcColumns(on, [...body.children].map(tr => tr.instrument())).map(c => c[0]);
       head.replaceChildren(...QC_FIELDS.filter(([k]) => keys.includes(k)).map(([, h]) => el("th", {}, h)), el("th", {}, ""));
-      [...body.children].forEach(tr => tr.reshape(keys));
+      [...body.children].forEach(tr => tr.reshape(keys, on));
     };
     [qubit, ts, tsKit].forEach(x => x.addEventListener("change", reshape));
     tsType.addEventListener("change", () => { fillKits(""); reshape(); });
@@ -1583,6 +1598,48 @@
 
     // Ticked before the order can go - the server asks for it too (Nitsan, 2026-10-18).
     const discarded = el("input", { type: "checkbox", required: true });
+    // The sample table out to Excel and back, as on the Sanger form: the
+    // template is the table as it stands, every column, filled in or not.
+    const qcTemplate = () => downloadCsv("atgc_sample_qc.csv", csvText(
+      [...body.children].map(tr => { const r = tr.read(); return QC_FIELDS.map(([k]) => r[k]); }),
+      QC_FIELDS.map(([, h]) => h)));
+    const QC_HEADINGS = {
+      name: ["sample name", "sample", "name"], ngul: ["ng/ul", "ng/µl", "concentration", "conc", "conc ng/ul"],
+      quantified_by: ["quantified by", "quantified"], instrument: ["instrument requested", "instrument"],
+      remarks: ["remarks", "remark", "comment", "comments"],
+    };
+    const qcFile = el("input", { type: "file", accept: ".csv,text/csv", hidden: true });
+    qcFile.addEventListener("change", async () => {
+      const chosen = qcFile.files[0];
+      qcFile.value = "";
+      if (!chosen) return;
+      const rows = parseCsv(await chosen.text());
+      const heads = (rows[0] || []).map(h => h.trim().toLowerCase());
+      const at = {};
+      Object.keys(QC_HEADINGS).forEach(key => {
+        at[key] = heads.findIndex(h => QC_HEADINGS[key].includes(h));
+      });
+      const error = document.getElementById("form-error");
+      if (at.name < 0) {
+        error.textContent = "That file has no Sample name column.";
+        return;
+      }
+      const records = rows.slice(1).filter(r => (r[at.name] || "").trim());
+      if (!records.length) {
+        error.textContent = "That file has no samples.";
+        return;
+      }
+      body.replaceChildren();
+      records.forEach(r => {
+        const values = {};
+        Object.keys(at).forEach(key => { if (at[key] >= 0) values[key] = (r[at[key]] || "").trim(); });
+        addRow({}).fill(values);
+      });
+      error.textContent = "";
+      reshape();
+      draft.save();
+    });
+
     const formsLink = state.me.submission_forms_url
       ? el("a", { href: state.me.submission_forms_url, target: "_blank", rel: "noopener" }, "submission form")
       : "submission form";
@@ -1628,7 +1685,11 @@
       el("div", { class: "table-wrap", style: "margin-top:12px" }, el("table", { class: "lines form" },
         el("thead", {}, head), body)),
       el("div", { class: "row", style: "margin-top:8px" },
-        el("button", { type: "button", onclick: () => { addRow(); reshape(); } }, "Add a row")),
+        el("button", { type: "button", onclick: () => { addRow(); reshape(); } }, "Add a row"),
+        el("span", { class: "grow" }),
+        el("button", { type: "button", class: "link", onclick: qcTemplate }, "Download template"),
+        el("button", { type: "button", class: "link", onclick: () => qcFile.click() }, "Upload CSV"),
+        qcFile),
       el("label", { style: "margin-top:12px" }, "Comments", remarks),
       el("div", { class: "row", style: "margin-top:10px" },
         el("button", { class: "primary", type: "submit" }, "Place order"),
