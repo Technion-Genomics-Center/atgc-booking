@@ -367,13 +367,13 @@
         el("div", {},
           approved.length ? orderTiles() : null,
           bookingList(),
-          el("h2", {}, "Orders"),
+          // The results folder beside the orders it holds - in the side column
+          // it fell below every order on a narrow window (2026-10-19).
+          el("div", { class: "orders-head" }, el("h2", {}, "Orders"),
+            me.folder ? el("a", { class: "button", href: me.folder, target: "_blank", rel: "noopener" },
+              "Results folder ↗") : null),
           renderOrderList()),
         el("aside", {},
-          me.folder ? el("h2", {}, "Your results") : null,
-          me.folder ? el("a", { class: "card folder", href: me.folder, target: "_blank", rel: "noopener" },
-            el("div", { class: "ico" }, "⌂"),
-            el("div", {}, el("b", {}, "Results folder"), el("div", { class: "muted small" }, "OneDrive · about 24 h after the run"))) : null,
           el("h2", {}, "Groups"),
           el("div", { class: "card" },
             invitations.map(i => el("div", { class: "group-row" },

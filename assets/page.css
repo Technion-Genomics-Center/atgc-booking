@@ -285,3 +285,7 @@ table.week .on { background: rgba(29, 165, 255, .07); }
 .slot { font: 12px var(--mono); border-radius: 4px; padding: 2px 4px; margin-bottom: 3px; }
 .slot.taken { background: #eef1f5; color: var(--muted); }
 .slot.mine { background: rgba(0, 129, 135, .14); color: var(--g); font-weight: 600; }
+
+/* "Orders" with the results folder beside it. */
+.orders-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.orders-head h2 { margin-bottom: 8px; }
