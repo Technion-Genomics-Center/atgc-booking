@@ -402,6 +402,7 @@
       el("td", {}, el("b", {}, g.name)), el("td", {}, g.pi_name),
       el("td", {}, el("span", { class: "status " + groupClass(g) }, groupLabel(g))),
       el("td", {}, g.manager && isOpen(g) ? el("button", { class: "link", onclick: () => renderMembers(g) }, "Members") : ""),
+      el("td", {}, g.edit_budgets ? el("button", { class: "link", onclick: () => renderBudgets(g.group_id) }, "Budgets") : ""),
       el("td", {}, g.folder ? el("a", { href: g.folder, target: "_blank", rel: "noopener" }, "Group folder") : "")));
     show(
       message ? errorLine(message) : null,
@@ -418,6 +419,38 @@
         el("div", { class: "row", style: "margin-top:12px" },
           el("button", { onclick: () => renderOpenGroup() }, "Open a group"))),
     );
+  }
+
+  // A group's budget numbers, kept by its lab managers - by its members in a
+  // group with none (Nitsan, 2026-10-22). They change, sometimes yearly.
+  function renderBudgets(groupId, message) {
+    setTab("Groups");
+    const g = (state.me.groups || []).find(x => x.group_id === groupId);
+    if (!g) return renderGroups();
+    const act = async (what, code) => {
+      const reply = await call("budget", { do: what, group_id: groupId, code }, "");
+      if (!reply) return;
+      if (!reply.ok) return renderBudgets(groupId, reply.error);
+      setMe(reply.data);
+      renderBudgets(groupId);
+    };
+    const code = el("input", { maxlength: "40", placeholder: "Budget number" });
+    show(el("h2", {}, "Budgets · " + g.name),
+      message ? errorLine(message) : null,
+      el("div", { class: "card" },
+        g.budgets.length ? el("div", { class: "table-wrap" }, el("table", {}, el("tbody", {}, g.budgets.map(b =>
+          el("tr", {},
+            el("td", {}, el("b", {}, b.code)),
+            el("td", {}, b.default ? el("span", { class: "status approved" }, "default")
+              : el("button", { class: "link", onclick: () => act("default", b.code) }, "Make default")),
+            el("td", {}, el("button", {
+              class: "link", onclick: () => { if (confirm("Retire " + b.code + "?")) act("retire", b.code); },
+            }, "Retire"))))))) : el("p", { class: "muted" }, "—"),
+        el("form", {
+          class: "row", style: "margin-top:12px",
+          onsubmit: e => { e.preventDefault(); if (code.value.trim()) act("add", code.value.trim()); },
+        }, code, el("button", { class: "primary", type: "submit" }, "Add"),
+          el("button", { type: "button", class: "link", onclick: () => renderGroups() }, "Back"))));
   }
 
   async function answerInvite(invitation, accept) {
@@ -1401,6 +1434,7 @@
     const group = el("select", { required: true }, groups.map(g =>
       el("option", { value: g.group_id, selected: from && from.group_id === g.group_id }, g.name)));
     const budget = el("select", {});
+    const ADD = "\u0000add";
     const fillBudgets = () => {
       const g = groups.find(x => x.group_id === group.value) || groups[0];
       if (g && g.no_technion_budget && !g.budgets.length) {
@@ -1408,9 +1442,28 @@
         return;
       }
       budget.replaceChildren(...(g ? g.budgets : []).map(b =>
-        el("option", { value: b.code, selected: from && from.budget ? from.budget === b.code : b.default }, b.code)));
+        el("option", { value: b.code, selected: from && from.budget ? from.budget === b.code : b.default }, b.code)),
+        // Budgets change, sometimes yearly: whoever keeps the group's adds one
+        // here, without leaving the order (Nitsan, 2026-10-22).
+        g && g.edit_budgets ? el("option", { value: ADD }, "Add a budget…") : null);
     };
     group.addEventListener("change", fillBudgets);
+    budget.addEventListener("change", async () => {
+      if (budget.value !== ADD) return;
+      const code = (window.prompt("New budget number") || "").trim();
+      if (code) {
+        const reply = await call("budget", { do: "add", group_id: group.value, code }, "");
+        if (reply && reply.ok) {
+          setMe(reply.data);
+          groups.splice(0, groups.length, ...state.me.groups.filter(x => x.status === "approved" && isOpen(x)));
+          fillBudgets();
+          budget.value = code;
+          return;
+        }
+        if (reply) alert(reply.error);
+      }
+      fillBudgets();
+    });
     fillBudgets();
     return { groups, group, budget, fillBudgets };
   }
